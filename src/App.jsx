@@ -1,0 +1,1346 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { supabase, configurato } from './supabase'
+import * as push from './push'
+
+// ---------------------------------------------------------------- utilità
+export const GUARDIA = 'guardia'
+export const GRAVITA = [
+  { v: 0, nome: 'Nessuna segnalazione', breve: '' },
+  { v: 1, nome: 'Da monitorare', breve: 'DA MONITORARE' },
+  { v: 2, nome: 'Critico', breve: 'CRITICO' },
+]
+export const RIANIMAZIONE = [
+  { v: null, nome: 'Non indicato' },
+  { v: 'si', nome: 'Rianimabile', breve: 'Rianimabile' },
+  { v: 'limitata', nome: 'Cure limitate', breve: 'Cure limitate' },
+  { v: 'no', nome: 'Non rianimabile (DNR)', breve: 'DNR' },
+]
+const haConsegna = (p) => Boolean(p.consegna?.trim() || p.gravita > 0 || p.rianimazione || p.allergie?.trim())
+const store = {
+  get(k) { try { return localStorage.getItem(k) } catch { return null } },
+  set(k, v) { try { localStorage.setItem(k, v) } catch { /* ignora */ } },
+}
+const uuid = () =>
+  crypto.randomUUID?.() ??
+  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0
+    return (c === 'x' ? r : (r & 3) | 8).toString(16)
+  })
+const upsert = (xs, r) => {
+  const i = xs.findIndex((x) => x.id === r.id)
+  if (i < 0) return [...xs, r]
+  const c = xs.slice()
+  c[i] = { ...c[i], ...r }
+  return c
+}
+const ordLetti = (a, b) =>
+  a.ordine - b.ordine || a.nome.localeCompare(b.nome, 'it', { numeric: true })
+const ordAtt = (a, b) =>
+  a.fatta - b.fatta || b.urgente - a.urgente || a.creata_il.localeCompare(b.creata_il)
+
+function quando(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  const oggi = new Date()
+  const ieri = new Date(Date.now() - 864e5)
+  const ora = d.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' })
+  if (d.toDateString() === oggi.toDateString()) return ora
+  if (d.toDateString() === ieri.toDateString()) return `ieri ${ora}`
+  return `${d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit' })} ${ora}`
+}
+
+// ---------------------------------------------------------------- app
+export default function App() {
+  const [session, setSession] = useState(undefined)
+  const [recupero, setRecupero] = useState(false)
+
+  useEffect(() => {
+    if (!configurato) return
+    supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    const { data } = supabase.auth.onAuthStateChange((ev, s) => {
+      setSession(s)
+      if (ev === 'PASSWORD_RECOVERY') setRecupero(true)
+    })
+    return () => data.subscription.unsubscribe()
+  }, [])
+
+  if (!configurato)
+    return (
+      <div className="centro">
+        <div className="box">
+          <h1>Configurazione mancante</h1>
+          <p>Crea il file <code>.env</code> partendo da <code>.env.example</code> con i dati del progetto Supabase.</p>
+        </div>
+      </div>
+    )
+  if (session === undefined) return <div className="centro">Caricamento…</div>
+  if (!session) return <Login />
+  if (recupero) return <NuovaPassword onFatto={() => setRecupero(false)} />
+  return <Principale session={session} />
+}
+
+// ---------------------------------------------------------------- login
+function Login() {
+  const [email, setEmail] = useState('')
+  const [pw, setPw] = useState('')
+  const [msg, setMsg] = useState('')
+  const [occupato, setOccupato] = useState(false)
+
+  async function entra(e) {
+    e.preventDefault()
+    setOccupato(true)
+    setMsg('')
+    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw })
+    setOccupato(false)
+    if (error) setMsg('Email o password non corretti.')
+  }
+  async function recupera() {
+    if (!email.trim()) return setMsg('Scrivi prima la tua email.')
+    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      redirectTo: location.origin,
+    })
+    setMsg(error ? error.message : 'Ti abbiamo inviato un\'email per reimpostare la password.')
+  }
+
+  return (
+    <div className="centro">
+      <form className="box" onSubmit={entra}>
+        <img src="/icon-192.png" alt="" className="logo" />
+        <h1>Neuro Reparto</h1>
+        <label>Email
+          <input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        </label>
+        <label>Password
+          <input type="password" autoComplete="current-password" value={pw} onChange={(e) => setPw(e.target.value)} required />
+        </label>
+        {msg && <p className="avviso">{msg}</p>}
+        <button className="btn primario" disabled={occupato}>{occupato ? 'Accesso…' : 'Entra'}</button>
+        <button type="button" className="btn link" onClick={recupera}>Password dimenticata?</button>
+      </form>
+    </div>
+  )
+}
+
+function NuovaPassword({ onFatto }) {
+  const [pw, setPw] = useState('')
+  const [msg, setMsg] = useState('')
+  async function salva(e) {
+    e.preventDefault()
+    const { error } = await supabase.auth.updateUser({ password: pw })
+    if (error) setMsg(error.message)
+    else onFatto()
+  }
+  return (
+    <div className="centro">
+      <form className="box" onSubmit={salva}>
+        <h1>Nuova password</h1>
+        <label>Password (min. 8 caratteri)
+          <input type="password" minLength={8} autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} required />
+        </label>
+        {msg && <p className="avviso">{msg}</p>}
+        <button className="btn primario">Salva</button>
+      </form>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------- schermata principale
+function Principale({ session }) {
+  const uid = session.user.id
+  const [reparti, setReparti] = useState([])
+  const [repId, setRepId] = useState(
+    () => new URLSearchParams(location.search).get('reparto') || store.get('reparto'),
+  )
+  const [profili, setProfili] = useState({})
+  const [letti, setLetti] = useState([])
+  const [pazienti, setPazienti] = useState([])
+  const [attivita, setAttivita] = useState([])
+  const [mostraFatte, setMostraFatte] = useState(false)
+  const [soloConAttivita, setSoloConAttivita] = useState(() => store.get('soloConAttivita') === '1')
+  const [live, setLive] = useState(false)
+  const [caricato, setCaricato] = useState(false)
+  const [modale, setModale] = useState(null)
+  const [toast, setToast] = useState(null)
+  const [pacchetti, setPacchetti] = useState([])
+  const toastTimer = useRef()
+  const richiesta = useRef(0)
+  const profiliRef = useRef(profili)
+  profiliRef.current = profili
+
+  const mostraToast = useCallback((testo, annulla, tipo) => {
+    clearTimeout(toastTimer.current)
+    setToast({ testo, annulla, tipo })
+    toastTimer.current = setTimeout(() => setToast(null), annulla ? 6000 : 3500)
+  }, [])
+  const errore = useCallback((e) => {
+    console.error(e)
+    mostraToast(`Errore: ${e?.message || e}`, null, 'errore')
+  }, [mostraToast])
+
+  // --- dati comuni
+  const caricaProfili = useCallback(async () => {
+    const { data } = await supabase.from('profili').select('id, nome')
+    if (data) setProfili(Object.fromEntries(data.map((p) => [p.id, p.nome])))
+  }, [])
+
+  useEffect(() => {
+    supabase.from('reparti').select('*').order('ordine').then(({ data, error }) => {
+      if (error) return errore(error)
+      setReparti(data)
+      setRepId((cur) => (cur === GUARDIA || data.some((r) => r.id === cur) ? cur : data[0]?.id))
+    })
+    caricaProfili()
+  }, [caricaProfili, errore])
+
+  const caricaPacchetti = useCallback(async () => {
+    const { data } = await supabase.from('pacchetti').select('*').order('ordine')
+    if (data) setPacchetti(data)
+  }, [])
+  useEffect(() => { caricaPacchetti() }, [caricaPacchetti])
+
+  useEffect(() => {
+    if (!repId) return
+    store.set('reparto', repId)
+    const u = new URL(location.href)
+    if (u.searchParams.has('reparto')) {
+      u.searchParams.delete('reparto')
+      history.replaceState(null, '', u)
+    }
+  }, [repId])
+
+  // apertura da notifica mentre l'app è già aperta
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    const h = (e) => {
+      if (e.data?.tipo === 'apri') {
+        const r = new URL(e.data.url).searchParams.get('reparto')
+        if (r) setRepId(r)
+      }
+    }
+    navigator.serviceWorker.addEventListener('message', h)
+    return () => navigator.serviceWorker.removeEventListener('message', h)
+  }, [])
+
+  // --- caricamento reparto
+  const carica = useCallback(async () => {
+    if (!repId) return
+    const n = ++richiesta.current
+    const da = new Date(Date.now() - 3 * 864e5).toISOString()
+    const g = repId === GUARDIA // vista guardia: tutti i reparti, solo valutazioni di guardia
+    let qa = supabase.from('attivita').select('*')
+    qa = g ? qa.eq('guardia', true) : qa.eq('reparto_id', repId)
+    qa = mostraFatte ? qa.or(`fatta.eq.false,fatta_il.gte."${da}"`) : qa.eq('fatta', false)
+    let ql = supabase.from('letti').select('*')
+    let qp = supabase.from('pazienti').select('*').eq('dimesso', false)
+    if (!g) { ql = ql.eq('reparto_id', repId); qp = qp.eq('reparto_id', repId) }
+    const [l, p, a] = await Promise.all([ql, qp, qa])
+    if (n !== richiesta.current) return // risposta vecchia: ignoro
+    const err = l.error || p.error || a.error
+    if (err) return errore(err)
+    setLetti(l.data)
+    setPazienti(p.data)
+    setAttivita(a.data)
+    setCaricato(true)
+    if (a.data.some((x) => x.creata_da && !(x.creata_da in profiliRef.current))) caricaProfili()
+  }, [repId, mostraFatte, errore, caricaProfili])
+  const caricaRef = useRef(carica)
+  caricaRef.current = carica
+
+  useEffect(() => { carica() }, [carica])
+
+  // --- tempo reale
+  useEffect(() => {
+    if (!repId) return
+    const filtro = repId === GUARDIA ? undefined : `reparto_id=eq.${repId}`
+    const ch = supabase.channel(`reparto-${repId}`)
+    const tabelle = [['letti', setLetti], ['pazienti', setPazienti], ['attivita', setAttivita]]
+    for (const [table, set] of tabelle) {
+      const suCambio = (p) => {
+        set((xs) => upsert(xs, p.new))
+        if (table === 'attivita' && p.new.creata_da && !(p.new.creata_da in profiliRef.current)) caricaProfili()
+      }
+      const f = filtro ? { filter: filtro } : {}
+      ch.on('postgres_changes', { event: 'INSERT', schema: 'public', table, ...f }, suCambio)
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table, ...f }, suCambio)
+        .on('postgres_changes', { event: 'DELETE', schema: 'public', table }, (p) =>
+          set((xs) => xs.filter((x) => x.id !== p.old.id)))
+    }
+    let prima = true
+    ch.subscribe((stato) => {
+      if (stato === 'SUBSCRIBED') {
+        setLive(true)
+        if (!prima) caricaRef.current() // riconnessione: ricarico per non perdere modifiche
+        prima = false
+      } else setLive(false)
+    })
+    return () => { supabase.removeChannel(ch) }
+  }, [repId, caricaProfili])
+
+  // ricarico quando il telefono torna in primo piano dopo un po'
+  useEffect(() => {
+    let nascosto = 0
+    const vis = () => {
+      if (document.hidden) nascosto = Date.now()
+      else if (nascosto && Date.now() - nascosto > 20000) caricaRef.current()
+    }
+    const on = () => caricaRef.current()
+    document.addEventListener('visibilitychange', vis)
+    window.addEventListener('online', on)
+    return () => {
+      document.removeEventListener('visibilitychange', vis)
+      window.removeEventListener('online', on)
+    }
+  }, [])
+
+  // --- azioni
+  const esegui = useCallback(async (q) => {
+    const { error } = await q
+    if (error) { errore(error); caricaRef.current() }
+    return !error
+  }, [errore])
+
+  const az = useMemo(() => ({
+    aggiungiAttivita(paz, testo, urgente = false, parentId = null, extra = {}) {
+      const row = {
+        id: uuid(), paziente_id: paz.id, reparto_id: paz.reparto_id, parent_id: parentId,
+        testo, urgente, fatta: false, creata_da: uid, creata_il: new Date().toISOString(),
+        fatta_da: null, fatta_il: null, guardia: Boolean(extra.guardia), ora: extra.ora || null,
+      }
+      setAttivita((xs) => upsert(xs, row))
+      esegui(supabase.from('attivita').insert(row))
+    },
+    aggiungiPacchetto(paz, voci) {
+      const t0 = Date.now()
+      let k = 0
+      const base = () => ({
+        paziente_id: paz.id, reparto_id: paz.reparto_id, urgente: false, fatta: false,
+        creata_da: uid, creata_il: new Date(t0 + k++).toISOString(), // mantiene l'ordine del pacchetto
+        fatta_da: null, fatta_il: null, guardia: false, ora: null,
+      })
+      const rows = []
+      for (const v of voci) {
+        const padre = { ...base(), id: uuid(), parent_id: null, testo: v.t }
+        rows.push(padre)
+        for (const f of v.f || []) rows.push({ ...base(), id: uuid(), parent_id: padre.id, testo: f })
+      }
+      if (!rows.length) return
+      setAttivita((xs) => rows.reduce(upsert, xs))
+      esegui(supabase.from('attivita').insert(rows))
+      mostraToast(`Aggiunte ${rows.length} attività`)
+    },
+    impostaFatta(ids, val) {
+      const patch = val
+        ? { fatta: true, fatta_da: uid, fatta_il: new Date().toISOString() }
+        : { fatta: false, fatta_da: null, fatta_il: null }
+      setAttivita((xs) => xs.map((x) => (ids.includes(x.id) ? { ...x, ...patch } : x)))
+      return esegui(supabase.from('attivita').update(patch).in('id', ids))
+    },
+    spunta(a, tutte) {
+      const val = !a.fatta
+      const figli = val ? tutte.filter((x) => x.parent_id === a.id && !x.fatta).map((x) => x.id) : []
+      const ids = [a.id, ...figli]
+      az.impostaFatta(ids, val)
+      if (val) mostraToast(`✓ ${a.testo}`, () => az.impostaFatta(ids, false))
+    },
+    modificaAttivita(a, patch) {
+      setAttivita((xs) => upsert(xs, { ...a, ...patch }))
+      esegui(supabase.from('attivita').update(patch).eq('id', a.id))
+    },
+    eliminaAttivita(a) {
+      setAttivita((xs) => xs.filter((x) => x.id !== a.id && x.parent_id !== a.id))
+      esegui(supabase.from('attivita').delete().eq('id', a.id))
+    },
+    async ricovera(letto, nome, note) {
+      const row = {
+        id: uuid(), letto_id: letto.id, reparto_id: letto.reparto_id, nome, note,
+        dimesso: false, creato_il: new Date().toISOString(),
+      }
+      setPazienti((xs) => upsert(xs, row))
+      return (await esegui(supabase.from('pazienti').insert(row))) ? row : null
+    },
+    modificaPaziente(p, patch) {
+      const locale = ['consegna', 'gravita', 'rianimazione', 'allergie'].some((k) => k in patch)
+        ? { consegna_il: new Date().toISOString(), consegna_da: uid } : {}
+      setPazienti((xs) => upsert(xs, { ...p, ...patch, ...locale }))
+      return esegui(supabase.from('pazienti').update(patch).eq('id', p.id))
+    },
+    dimetti(p) {
+      az.modificaPaziente(p, { dimesso: true })
+      mostraToast(`${p.nome} dimesso`, () => az.modificaPaziente(p, { dimesso: false }))
+    },
+    async trasferisci(p, lettoId) {
+      const ok = await esegui(supabase.rpc('trasferisci_paziente', { p_paziente: p.id, p_letto: lettoId }))
+      if (ok) { caricaRef.current(); mostraToast(`${p.nome} trasferito`) }
+      return ok
+    },
+    async aggiungiLetto(nome) {
+      const ordine = Math.max(0, ...letti.map((l) => l.ordine)) + 1
+      const row = { id: uuid(), reparto_id: repId, nome, ordine }
+      setLetti((xs) => upsert(xs, row))
+      return esegui(supabase.from('letti').insert(row))
+    },
+    rinominaLetto(l, nome) {
+      setLetti((xs) => upsert(xs, { ...l, nome }))
+      return esegui(supabase.from('letti').update({ nome }).eq('id', l.id))
+    },
+    eliminaLetto(l) {
+      setLetti((xs) => xs.filter((x) => x.id !== l.id))
+      return esegui(supabase.from('letti').delete().eq('id', l.id))
+    },
+  }), [uid, esegui, mostraToast, letti, repId])
+
+  // --- dati derivati
+  const visibili = useMemo(
+    () => attivita.filter((a) => a.reparto_id === repId && (mostraFatte || !a.fatta)),
+    [attivita, repId, mostraFatte],
+  )
+  const attPerPaz = useMemo(() => {
+    const m = {}
+    for (const a of visibili) (m[a.paziente_id] ??= []).push(a)
+    return m
+  }, [visibili])
+  const pazPerLetto = useMemo(() => {
+    const m = {}
+    for (const p of pazienti) if (!p.dimesso && p.reparto_id === repId) m[p.letto_id] = p
+    return m
+  }, [pazienti, repId])
+  const lettiRep = useMemo(
+    () => letti.filter((l) => l.reparto_id === repId).sort(ordLetti),
+    [letti, repId],
+  )
+  const aperte = visibili.filter((a) => !a.fatta).length
+  const urgenti = visibili.filter((a) => !a.fatta && a.urgente).length
+  const occupati = lettiRep.filter((l) => pazPerLetto[l.id]).length
+  const repCorrente = reparti.find((r) => r.id === repId)
+
+  const lettiMostrati = soloConAttivita
+    ? lettiRep.filter((l) => {
+        const p = pazPerLetto[l.id]
+        return p && (attPerPaz[p.id] || []).some((a) => !a.fatta)
+      })
+    : lettiRep
+
+  return (
+    <div className="app">
+      <header className="testata">
+        <div className="riga-titolo">
+          <h1>{repId === GUARDIA ? '🌙 Guardia' : repCorrente?.nome ?? 'Neuro Reparto'}</h1>
+          <span className={`stato ${live ? 'on' : ''}`} title={live ? 'Collegato in tempo reale' : 'Connessione…'}>
+            {live ? 'live' : '…'}
+          </span>
+          <button className="icona" aria-label="Impostazioni" onClick={() => setModale({ tipo: 'impostazioni' })}>⚙︎</button>
+        </div>
+        <nav className="reparti">
+          <button className={`chip guardia ${repId === GUARDIA ? 'attivo' : ''}`} onClick={() => setRepId(GUARDIA)}>
+            🌙 Guardia
+          </button>
+          {reparti.map((r) => (
+            <button key={r.id} className={`chip ${r.id === repId ? 'attivo' : ''}`} onClick={() => setRepId(r.id)}>
+              {r.nome}
+            </button>
+          ))}
+        </nav>
+        {repId !== GUARDIA && <div className="riepilogo">
+          <span><b>{aperte}</b> da fare</span>
+          {urgenti > 0 && <span className="rosso"><b>{urgenti}</b> {urgenti === 1 ? 'urgente' : 'urgenti'}</span>}
+          <span>{occupati}/{lettiRep.length} letti</span>
+          <span className="spazio" />
+          <button className={`mini ${soloConAttivita ? 'attivo' : ''}`} onClick={() => {
+            setSoloConAttivita((v) => { store.set('soloConAttivita', v ? '0' : '1'); return !v })
+          }}>Con attività</button>
+          <button className={`mini ${mostraFatte ? 'attivo' : ''}`} onClick={() => setMostraFatte((v) => !v)}>Fatte</button>
+        </div>}
+      </header>
+
+      {repId === GUARDIA ? (
+        <Guardia
+          reparti={reparti} letti={letti} pazienti={pazienti} attivita={attivita} profili={profili}
+          az={az} apri={setModale} caricato={caricato}
+          mostraFatte={mostraFatte} setMostraFatte={setMostraFatte}
+        />
+      ) : (
+      <main className="lista">
+        {!caricato && <p className="vuoto">Caricamento…</p>}
+        {caricato && lettiMostrati.length === 0 && (
+          <p className="vuoto">{soloConAttivita ? 'Nessuna attività da fare 🎉' : 'Nessun letto.'}</p>
+        )}
+        {lettiMostrati.map((l) => (
+          <Letto
+            key={l.id}
+            letto={l}
+            paziente={pazPerLetto[l.id]}
+            attivita={pazPerLetto[l.id] ? attPerPaz[pazPerLetto[l.id].id] || [] : []}
+            profili={profili}
+            az={az}
+            apri={setModale}
+          />
+        ))}
+        {caricato && !soloConAttivita && (
+          <button className="btn tratteggio" onClick={() => setModale({ tipo: 'nuovoLetto' })}>+ Aggiungi letto</button>
+        )}
+      </main>
+      )}
+
+      {modale && (
+        <Modale
+          m={modale}
+          chiudi={() => setModale(null)}
+          az={az}
+          reparti={reparti}
+          repId={repId}
+          lettiRep={lettiRep}
+          pazPerLetto={pazPerLetto}
+          profili={profili}
+          setProfili={setProfili}
+          session={session}
+          mostraToast={mostraToast}
+          apri={setModale}
+          pacchetti={pacchetti}
+          caricaPacchetti={caricaPacchetti}
+          attivita={attivita}
+        />
+      )}
+
+      {toast && (
+        <div className={`toast ${toast.tipo || ''}`} role="status">
+          <span>{toast.testo}</span>
+          {toast.annulla && (
+            <button onClick={() => { toast.annulla(); setToast(null) }}>Annulla</button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------- scheda letto
+function Letto({ letto, paziente, attivita, profili, az, apri }) {
+  const [testo, setTesto] = useState('')
+  const [urgente, setUrgente] = useState(false)
+  const [perGuardia, setPerGuardia] = useState(false)
+
+  if (!paziente) {
+    return (
+      <section className="letto libero">
+        <div className="intest">
+          <span className="num">{letto.nome}</span>
+          <span className="nome grigio">Libero</span>
+          <button className="mini" onClick={() => apri({ tipo: 'ricovero', letto })}>+ Paziente</button>
+          <button className="icona" aria-label="Opzioni letto" onClick={() => apri({ tipo: 'letto', letto })}>⋯</button>
+        </div>
+      </section>
+    )
+  }
+
+  const ids = new Set(attivita.map((a) => a.id))
+  const radici = attivita.filter((a) => !a.parent_id || !ids.has(a.parent_id)).sort(ordAtt)
+  const figliDi = (id) => attivita.filter((a) => a.parent_id === id).sort(ordAtt)
+  const aperte = attivita.filter((a) => !a.fatta).length
+  const haUrgenti = attivita.some((a) => !a.fatta && a.urgente)
+
+  function aggiungi(e) {
+    e.preventDefault()
+    const t = testo.trim()
+    if (!t) return
+    az.aggiungiAttivita(paziente, t, urgente, null, { guardia: perGuardia })
+    setTesto('')
+    setUrgente(false)
+    setPerGuardia(false)
+  }
+
+  return (
+    <section className={`letto ${haUrgenti ? 'urgente' : ''}`}>
+      <div className="intest" onClick={() => apri({ tipo: 'paziente', paziente, letto })}>
+        <span className="num">{letto.nome}</span>
+        <span className="nome">{paziente.nome}</span>
+        {aperte > 0 && <span className="badge">{aperte}</span>}
+        <button className="icona" aria-label="Aggiungi pacchetto di attività"
+          onClick={(e) => { e.stopPropagation(); apri({ tipo: 'pacchetto', paziente, letto }) }}>📋</button>
+        <button className="icona" aria-label="Consegna per la guardia"
+          onClick={(e) => { e.stopPropagation(); apri({ tipo: 'consegna', paziente, letto }) }}>🌙</button>
+        <button className="icona" aria-label="Modifica paziente">✎</button>
+      </div>
+      {haConsegna(paziente) && (
+        <BoxConsegna paziente={paziente} compatto onClick={() => apri({ tipo: 'consegna', paziente, letto })} />
+      )}
+      {paziente.note && (
+        <p className="note" onClick={() => apri({ tipo: 'paziente', paziente, letto })}>{paziente.note}</p>
+      )}
+      <ul className="attivita">
+        {radici.map((a) => (
+          <Attivita key={a.id} a={a} figli={figliDi(a.id)} tutte={attivita} profili={profili} az={az} apri={apri} paziente={paziente} />
+        ))}
+      </ul>
+      <form className="aggiungi" onSubmit={aggiungi}>
+        <input
+          value={testo}
+          onChange={(e) => setTesto(e.target.value)}
+          placeholder={perGuardia ? 'Valutazione per la guardia…' : 'Nuova attività…'}
+          enterKeyHint="done"
+        />
+        <button type="button" className={`luna ${perGuardia ? 'attivo' : ''}`} onClick={() => setPerGuardia((v) => !v)} aria-label="Per la guardia">🌙</button>
+        <button type="button" className={`urg ${urgente ? 'attivo' : ''}`} onClick={() => setUrgente((v) => !v)} aria-label="Urgente">!</button>
+        <button className="piu" aria-label="Aggiungi" disabled={!testo.trim()}>+</button>
+      </form>
+    </section>
+  )
+}
+
+function Attivita({ a, figli, tutte, profili, az, apri, paziente, sotto, nascondiLuna }) {
+  const meta = a.fatta
+    ? `fatta da ${profili[a.fatta_da] ?? '—'} · ${quando(a.fatta_il)}`
+    : `${profili[a.creata_da] ?? ''} · ${quando(a.creata_il)}`
+  const padreNascosto = a.parent_id && !sotto
+  const padre = padreNascosto ? tutte.find((x) => x.id === a.parent_id) : null
+  return (
+    <li className={`att ${a.fatta ? 'fatta' : ''} ${a.urgente ? 'urg' : ''} ${sotto ? 'sotto' : ''}`}>
+      <div className="riga">
+        <button
+          className="check"
+          role="checkbox"
+          aria-checked={a.fatta}
+          aria-label={a.fatta ? 'Segna come da fare' : 'Segna come fatta'}
+          onClick={() => az.spunta(a, tutte)}
+        >{a.fatta ? '✓' : ''}</button>
+        <div className="testo" onClick={() => apri({ tipo: 'attivita', a, paziente })}>
+          <span>
+            {a.guardia && !nascondiLuna && <span className="tag-g" title="Valutazione per la guardia">🌙</span>}
+            {a.ora && <span className="tag-ora">{a.ora}</span>}
+            {padre ? <span className="grigio">{padre.testo} › </span> : null}{a.testo}
+          </span>
+          <small>{meta}</small>
+        </div>
+        {!sotto && (
+          <button className="icona sub" aria-label="Aggiungi sotto-attività"
+            onClick={() => apri({ tipo: 'sotto', a, paziente })}>↳+</button>
+        )}
+      </div>
+      {figli.length > 0 && (
+        <ul className="figli">
+          {figli.map((f) => (
+            <Attivita key={f.id} a={f} figli={[]} tutte={tutte} profili={profili} az={az} apri={apri} paziente={paziente} sotto nascondiLuna={nascondiLuna} />
+          ))}
+        </ul>
+      )}
+    </li>
+  )
+}
+
+// ---------------------------------------------------------------- finestre
+function Foglio({ titolo, chiudi, children }) {
+  useEffect(() => {
+    const h = (e) => e.key === 'Escape' && chiudi()
+    window.addEventListener('keydown', h)
+    return () => window.removeEventListener('keydown', h)
+  }, [chiudi])
+  return (
+    <div className="velo" onClick={chiudi}>
+      <div className="foglio" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={titolo}>
+        <div className="foglio-testa">
+          <h2>{titolo}</h2>
+          <button className="icona" onClick={chiudi} aria-label="Chiudi">✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
+  )
+}
+
+function Modale(props) {
+  const { m, chiudi } = props
+  switch (m.tipo) {
+    case 'ricovero': return <FormPaziente {...props} letto={m.letto} />
+    case 'paziente': return <FormPaziente {...props} letto={m.letto} paziente={m.paziente} />
+    case 'letto': return <FormLetto {...props} letto={m.letto} />
+    case 'nuovoLetto': return <FormLetto {...props} />
+    case 'attivita': return <FormAttivita {...props} a={m.a} paziente={m.paziente} />
+    case 'sotto': return <FormSotto {...props} a={m.a} paziente={m.paziente} />
+    case 'impostazioni': return <Impostazioni {...props} />
+    case 'consegna': return <FormConsegna {...props} paziente={m.paziente} letto={m.letto} />
+    case 'pacchetto': return <FormPacchetto {...props} paziente={m.paziente} letto={m.letto} iniziale={m.pacchettoId} />
+    case 'gestionePacchetti': return <GestionePacchetti {...props} />
+    default: chiudi(); return null
+  }
+}
+
+function FormPaziente({ chiudi, az, letto, paziente, reparti, repId, pacchetti = [], apri }) {
+  const [nome, setNome] = useState(paziente?.nome ?? '')
+  const [pacchettoId, setPacchettoId] = useState('')
+  const [note, setNote] = useState(paziente?.note ?? '')
+  const [liberi, setLiberi] = useState(null)
+  const [dest, setDest] = useState('')
+
+  useEffect(() => {
+    if (!paziente) return
+    Promise.all([
+      supabase.from('letti').select('id, nome, ordine, reparto_id'),
+      supabase.from('pazienti').select('letto_id').eq('dimesso', false),
+    ]).then(([l, p]) => {
+      if (l.error || p.error) return
+      const occ = new Set(p.data.map((x) => x.letto_id))
+      setLiberi(l.data.filter((x) => !occ.has(x.id)).sort(ordLetti))
+    })
+  }, [paziente])
+
+  async function salva(e) {
+    e.preventDefault()
+    if (!nome.trim()) return
+    if (paziente) { az.modificaPaziente(paziente, { nome: nome.trim(), note }); return chiudi() }
+    const nuovo = await az.ricovera(letto, nome.trim(), note)
+    if (nuovo && pacchettoId) apri({ tipo: 'pacchetto', paziente: nuovo, letto, pacchettoId })
+    else chiudi()
+  }
+
+  const nomeRep = (id) => reparti.find((r) => r.id === id)?.nome ?? ''
+  const ordinati = liberi
+    ? [...liberi].sort((a, b) => (a.reparto_id === repId ? -1 : 0) - (b.reparto_id === repId ? -1 : 0))
+    : []
+
+  return (
+    <Foglio titolo={paziente ? `Letto ${letto.nome}` : `Ricovero · letto ${letto.nome}`} chiudi={chiudi}>
+      <form onSubmit={salva} className="form">
+        <label>Paziente
+          <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Cognome Nome" autoFocus={!paziente} required />
+        </label>
+        <label>Appunti
+          <textarea rows={5} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Diagnosi, terapia, cose da ricordare…" />
+        </label>
+        {!paziente && pacchetti.length > 0 && (
+          <label>📋 Pacchetto di attività iniziale
+            <select value={pacchettoId} onChange={(e) => setPacchettoId(e.target.value)}>
+              <option value="">Nessuno</option>
+              {pacchetti.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+            </select>
+          </label>
+        )}
+        <button className="btn primario">{!paziente && pacchettoId ? 'Salva e scegli attività →' : 'Salva'}</button>
+      </form>
+      {paziente && (
+        <>
+          <div className="sezione">
+            <h3>Trasferisci in altro letto</h3>
+            {liberi === null ? <p className="grigio">Caricamento letti liberi…</p> : (
+              <div className="riga-form">
+                <select value={dest} onChange={(e) => setDest(e.target.value)}>
+                  <option value="">Scegli letto libero…</option>
+                  {ordinati.map((l) => (
+                    <option key={l.id} value={l.id}>{nomeRep(l.reparto_id)} · letto {l.nome}</option>
+                  ))}
+                </select>
+                <button className="btn" disabled={!dest}
+                  onClick={async () => { if (await az.trasferisci(paziente, dest)) chiudi() }}>Sposta</button>
+              </div>
+            )}
+          </div>
+          <div className="sezione">
+            <button className="btn pericolo" onClick={() => {
+              if (confirm(`Dimettere ${paziente.nome}? Il letto tornerà libero.`)) { az.dimetti(paziente); chiudi() }
+            }}>Dimetti paziente</button>
+          </div>
+        </>
+      )}
+    </Foglio>
+  )
+}
+
+function FormLetto({ chiudi, az, letto, lettiRep, pazPerLetto }) {
+  const suggerito = useMemo(() => {
+    const nums = lettiRep.map((l) => parseInt(l.nome, 10)).filter((n) => !isNaN(n))
+    return String(nums.length ? Math.max(...nums) + 1 : 1)
+  }, [lettiRep])
+  const [nome, setNome] = useState(letto?.nome ?? suggerito)
+  async function salva(e) {
+    e.preventDefault()
+    const n = nome.trim()
+    if (!n) return
+    if (letto) await az.rinominaLetto(letto, n)
+    else await az.aggiungiLetto(n)
+    chiudi()
+  }
+  return (
+    <Foglio titolo={letto ? `Letto ${letto.nome}` : 'Nuovo letto'} chiudi={chiudi}>
+      <form onSubmit={salva} className="form">
+        <label>Nome / numero letto
+          <input value={nome} onChange={(e) => setNome(e.target.value)} autoFocus required />
+        </label>
+        <button className="btn primario">{letto ? 'Rinomina' : 'Aggiungi letto'}</button>
+      </form>
+      {letto && !pazPerLetto[letto.id] && (
+        <div className="sezione">
+          <button className="btn pericolo" onClick={() => {
+            if (confirm(`Eliminare il letto ${letto.nome}? Verrà cancellato anche lo storico dei pazienti dimessi da questo letto.`)) {
+              az.eliminaLetto(letto); chiudi()
+            }
+          }}>Elimina letto</button>
+        </div>
+      )}
+    </Foglio>
+  )
+}
+
+function FormAttivita({ chiudi, az, a, paziente, profili }) {
+  const [testo, setTesto] = useState(a.testo)
+  const [guardia, setGuardia] = useState(a.guardia)
+  const [ora, setOra] = useState(a.ora ?? '')
+  function salva(e) {
+    e.preventDefault()
+    const patch = {}
+    if (testo.trim() && testo.trim() !== a.testo) patch.testo = testo.trim()
+    if (guardia !== a.guardia) patch.guardia = guardia
+    if ((ora || null) !== (a.ora ?? null)) patch.ora = ora || null
+    if (Object.keys(patch).length) az.modificaAttivita(a, patch)
+    chiudi()
+  }
+  return (
+    <Foglio titolo={paziente.nome} chiudi={chiudi}>
+      <form onSubmit={salva} className="form">
+        <label>Attività
+          <textarea rows={3} value={testo} onChange={(e) => setTesto(e.target.value)} />
+        </label>
+        <div className="riga-form">
+          <label className="spunta cresce">
+            <input type="checkbox" checked={guardia} onChange={(e) => setGuardia(e.target.checked)} />
+            🌙 Per la guardia
+          </label>
+          <label className="ora-label">Ora
+            <input type="time" value={ora} onChange={(e) => setOra(e.target.value)} />
+          </label>
+        </div>
+        <p className="grigio piccolo">
+          Creata da {profili[a.creata_da] ?? '—'} · {quando(a.creata_il)}
+          {a.fatta && <><br />Fatta da {profili[a.fatta_da] ?? '—'} · {quando(a.fatta_il)}</>}
+        </p>
+        <button className="btn primario">Salva</button>
+      </form>
+      <div className="sezione bottoni">
+        <button className="btn" onClick={() => { az.modificaAttivita(a, { urgente: !a.urgente }); chiudi() }}>
+          {a.urgente ? 'Togli urgenza' : '🔴 Segna urgente'}
+        </button>
+        <button className="btn pericolo" onClick={() => {
+          if (confirm('Eliminare definitivamente questa attività?')) { az.eliminaAttivita(a); chiudi() }
+        }}>Elimina</button>
+      </div>
+    </Foglio>
+  )
+}
+
+function FormSotto({ chiudi, az, a, paziente }) {
+  const [righe, setRighe] = useState('')
+  function salva(e) {
+    e.preventDefault()
+    righe.split('\n').map((s) => s.trim()).filter(Boolean)
+      .forEach((t) => az.aggiungiAttivita(paziente, t, false, a.id, { guardia: a.guardia }))
+    chiudi()
+  }
+  return (
+    <Foglio titolo="Sotto-attività" chiudi={chiudi}>
+      <form onSubmit={salva} className="form">
+        <p className="grigio">{paziente.nome} › <b>{a.testo}</b></p>
+        <label>Una per riga
+          <textarea rows={4} value={righe} onChange={(e) => setRighe(e.target.value)} autoFocus
+            placeholder={'es.\nEmocromo\nPCR\nElettroliti'} />
+        </label>
+        <button className="btn primario" disabled={!righe.trim()}>Aggiungi</button>
+      </form>
+    </Foglio>
+  )
+}
+
+function Impostazioni({ chiudi, session, profili, setProfili, reparti, mostraToast, apri }) {
+  const uid = session.user.id
+  const [nome, setNome] = useState(profili[uid] ?? '')
+  const [notif, setNotif] = useState({ caricato: false, attive: false, reparti: null })
+  const [sel, setSel] = useState([])
+  const [pw, setPw] = useState('')
+  const [occupato, setOccupato] = useState(false)
+  const ok = push.supportato()
+
+  useEffect(() => {
+    if (!ok) return
+    push.statoAttuale().then((s) => {
+      setNotif({ caricato: true, ...s })
+      setSel(s.reparti ?? reparti.map((r) => r.id))
+    }).catch(() => setNotif({ caricato: true, attive: false }))
+  }, [ok, reparti])
+
+  async function salvaNome() {
+    const n = nome.trim()
+    if (!n) return
+    const { error } = await supabase.from('profili').update({ nome: n }).eq('id', uid)
+    if (error) return mostraToast(error.message, null, 'errore')
+    setProfili((p) => ({ ...p, [uid]: n }))
+    mostraToast('Nome salvato')
+  }
+  async function attivaNotifiche() {
+    setOccupato(true)
+    try {
+      const tutti = sel.length === reparti.length
+      await push.attiva(tutti ? null : sel)
+      setNotif({ caricato: true, attive: true, reparti: tutti ? null : sel })
+      mostraToast('Notifiche attive')
+    } catch (e) {
+      mostraToast(e.message || String(e), null, 'errore')
+    }
+    setOccupato(false)
+  }
+  async function disattivaNotifiche() {
+    setOccupato(true)
+    await push.disattiva().catch(() => {})
+    setNotif({ caricato: true, attive: false, reparti: null })
+    setOccupato(false)
+  }
+  async function cambiaPw(e) {
+    e.preventDefault()
+    const { error } = await supabase.auth.updateUser({ password: pw })
+    mostraToast(error ? error.message : 'Password aggiornata', null, error ? 'errore' : '')
+    if (!error) setPw('')
+  }
+
+  return (
+    <Foglio titolo="Impostazioni" chiudi={chiudi}>
+      <div className="sezione">
+        <h3>Il tuo nome</h3>
+        <div className="riga-form">
+          <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Dr. Rossi" />
+          <button className="btn" onClick={salvaNome}>Salva</button>
+        </div>
+        <p className="grigio piccolo">{session.user.email}</p>
+      </div>
+
+      <div className="sezione">
+        <h3>Notifiche</h3>
+        {!ok && push.isIOS && !push.isStandalone && (
+          <p className="info">Su iPhone: tocca <b>Condividi</b> → <b>Aggiungi alla schermata Home</b>, poi apri l'app dall'icona e torna qui.</p>
+        )}
+        {!ok && !(push.isIOS && !push.isStandalone) && (
+          <p className="grigio">Questo browser non supporta le notifiche push.</p>
+        )}
+        {ok && notif.caricato && (
+          <>
+            <p className="grigio piccolo">Ricevi un avviso quando un collega aggiunge un'attività nei reparti scelti.</p>
+            <div className="spunte">
+              {reparti.map((r) => (
+                <label key={r.id} className="spunta">
+                  <input type="checkbox" checked={sel.includes(r.id)}
+                    onChange={(e) => setSel((s) => e.target.checked ? [...s, r.id] : s.filter((x) => x !== r.id))} />
+                  {r.nome}
+                </label>
+              ))}
+            </div>
+            <div className="bottoni">
+              <button className="btn primario" disabled={occupato || sel.length === 0} onClick={attivaNotifiche}>
+                {notif.attive ? 'Aggiorna reparti' : 'Attiva notifiche'}
+              </button>
+              {notif.attive && <button className="btn" disabled={occupato} onClick={disattivaNotifiche}>Disattiva</button>}
+            </div>
+            {notif.attive && <p className="verde piccolo">✓ Notifiche attive su questo dispositivo</p>}
+          </>
+        )}
+      </div>
+
+      <div className="sezione">
+        <h3>Pacchetti di attività</h3>
+        <p className="grigio piccolo">Elenchi di attività predefinite da aggiungere con un tocco (📋 sulla scheda del paziente). Sono condivisi con tutti i medici.</p>
+        <button className="btn" onClick={() => apri({ tipo: 'gestionePacchetti' })}>Gestisci pacchetti</button>
+      </div>
+
+      <div className="sezione">
+        <h3>Cambia password</h3>
+        <form className="riga-form" onSubmit={cambiaPw}>
+          <input type="password" minLength={8} value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Nuova password" autoComplete="new-password" />
+          <button className="btn" disabled={pw.length < 8}>Salva</button>
+        </form>
+      </div>
+
+      <div className="sezione">
+        <button className="btn pericolo" onClick={async () => { await push.disattiva().catch(() => {}); supabase.auth.signOut() }}>Esci</button>
+      </div>
+    </Foglio>
+  )
+}
+
+// ---------------------------------------------------------------- GUARDIA
+function BoxConsegna({ paziente: p, compatto, onClick, profili = {} }) {
+  const g = GRAVITA.find((x) => x.v === p.gravita) ?? GRAVITA[0]
+  const r = RIANIMAZIONE.find((x) => x.v === (p.rianimazione ?? null))
+  const vecchia = p.consegna_il && Date.now() - new Date(p.consegna_il).getTime() > 24 * 3600e3
+  return (
+    <div className={`consegna g${p.gravita} ${compatto ? 'compatta' : ''}`} onClick={onClick}>
+      <div className="tags">
+        {compatto && <span className="tag luna-tag">🌙 Consegna</span>}
+        {p.gravita > 0 && <span className={`tag grav${p.gravita}`}>{g.breve}</span>}
+        {r?.breve && <span className={`tag ria-${p.rianimazione}`}>{r.breve}</span>}
+        {p.allergie?.trim() && <span className="tag allergia">⚠ Allergie: {p.allergie.trim()}</span>}
+      </div>
+      {p.consegna?.trim() && <p className="testo-consegna">{p.consegna.trim()}</p>}
+      {!compatto && p.consegna_il && (
+        <small className={vecchia ? 'rosso' : 'grigio'}>
+          {vecchia ? '⚠ Da verificare · aggiornata ' : 'Aggiornata '}
+          {quando(p.consegna_il)}{p.consegna_da && profili[p.consegna_da] ? ` da ${profili[p.consegna_da]}` : ''}
+        </small>
+      )}
+    </div>
+  )
+}
+
+function Guardia({ reparti, letti, pazienti, attivita, profili, az, apri, caricato, mostraFatte, setMostraFatte }) {
+  const [filtroRep, setFiltroRep] = useState(() => store.get('guardiaRep') || 'tutti')
+  const [tutti, setTutti] = useState(false)
+
+  const ordRep = useMemo(() => Object.fromEntries(reparti.map((r) => [r.id, r.ordine])), [reparti])
+  const nomeRep = useMemo(() => Object.fromEntries(reparti.map((r) => [r.id, r.nome])), [reparti])
+  const lettoDi = useMemo(() => Object.fromEntries(letti.map((l) => [l.id, l])), [letti])
+  const valPerPaz = useMemo(() => {
+    const m = {}
+    for (const a of attivita) if (a.guardia && (mostraFatte || !a.fatta)) (m[a.paziente_id] ??= []).push(a)
+    return m
+  }, [attivita, mostraFatte])
+
+  const vuoto = { ordine: 0, nome: '' }
+  let lista = pazienti.filter((p) => !p.dimesso && (filtroRep === 'tutti' || p.reparto_id === filtroRep))
+  if (!tutti) lista = lista.filter((p) => haConsegna(p) || valPerPaz[p.id]?.length)
+  lista = [...lista].sort((a, b) =>
+    b.gravita - a.gravita ||
+    (ordRep[a.reparto_id] ?? 0) - (ordRep[b.reparto_id] ?? 0) ||
+    ordLetti(lettoDi[a.letto_id] ?? vuoto, lettoDi[b.letto_id] ?? vuoto))
+
+  const critici = lista.filter((p) => p.gravita === 2).length
+  const daFare = lista.reduce((n, p) => n + (valPerPaz[p.id] || []).filter((a) => !a.fatta).length, 0)
+
+  return (
+    <>
+      <div className="barra-guardia">
+        <span><b>{lista.length}</b> {tutti ? 'pazienti' : 'in consegna'}</span>
+        {critici > 0 && <span className="rosso"><b>{critici}</b> {critici === 1 ? 'critico' : 'critici'}</span>}
+        <span><b>{daFare}</b> {daFare === 1 ? 'valutazione' : 'valutazioni'}</span>
+        <span className="spazio" />
+        <select className="mini-select" value={filtroRep}
+          onChange={(e) => { setFiltroRep(e.target.value); store.set('guardiaRep', e.target.value) }}>
+          <option value="tutti">Tutti i reparti</option>
+          {reparti.map((r) => <option key={r.id} value={r.id}>{r.nome}</option>)}
+        </select>
+        <button className={`mini ${tutti ? 'attivo' : ''}`} onClick={() => setTutti((v) => !v)}>Tutti i pazienti</button>
+        <button className={`mini ${mostraFatte ? 'attivo' : ''}`} onClick={() => setMostraFatte((v) => !v)}>Fatte</button>
+        <button className="mini" onClick={() => {
+          document.querySelectorAll('details.appunti').forEach((d) => { d.open = true })
+          setTimeout(() => window.print(), 50)
+        }}>🖨 Stampa</button>
+      </div>
+      <main className="lista">
+        <h2 className="solo-stampa">
+          Consegne di guardia · {filtroRep === 'tutti' ? 'tutti i reparti' : nomeRep[filtroRep]} · {new Date().toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}
+        </h2>
+        {!caricato && <p className="vuoto">Caricamento…</p>}
+        {caricato && lista.length === 0 && (
+          <p className="vuoto">
+            Nessuna consegna.<br />
+            <span className="piccolo">Per aggiungerne una tocca 🌙 sulla scheda del paziente nel suo reparto, oppure “Tutti i pazienti”.</span>
+          </p>
+        )}
+        {lista.map((p) => (
+          <SchedaGuardia key={p.id} p={p} letto={lettoDi[p.letto_id]} nomeRep={nomeRep[p.reparto_id]}
+            valutazioni={valPerPaz[p.id] || []} profili={profili} az={az} apri={apri} />
+        ))}
+      </main>
+    </>
+  )
+}
+
+function SchedaGuardia({ p, letto, nomeRep, valutazioni, profili, az, apri }) {
+  const [testo, setTesto] = useState('')
+  const [ora, setOra] = useState('')
+  const ids = new Set(valutazioni.map((a) => a.id))
+  const perOra = (a, b) => a.fatta - b.fatta || b.urgente - a.urgente ||
+    (a.ora || '99').localeCompare(b.ora || '99') || a.creata_il.localeCompare(b.creata_il)
+  const radici = valutazioni.filter((a) => !a.parent_id || !ids.has(a.parent_id)).sort(perOra)
+  const figliDi = (id) => valutazioni.filter((a) => a.parent_id === id).sort(perOra)
+
+  function aggiungi(e) {
+    e.preventDefault()
+    const t = testo.trim()
+    if (!t) return
+    az.aggiungiAttivita(p, t, false, null, { guardia: true, ora })
+    setTesto('')
+    setOra('')
+  }
+
+  return (
+    <section className={`letto scheda-g g${p.gravita}`}>
+      <div className="intest" onClick={() => apri({ tipo: 'consegna', paziente: p, letto })}>
+        <span className="num">{letto?.nome ?? '?'}</span>
+        <div className="nome-blocco">
+          <span className="nome">{p.nome}</span>
+          <small className="grigio">{nomeRep}</small>
+        </div>
+        <button className="icona" aria-label="Modifica consegna">✎</button>
+      </div>
+      {haConsegna(p)
+        ? <BoxConsegna paziente={p} profili={profili} onClick={() => apri({ tipo: 'consegna', paziente: p, letto })} />
+        : <p className="grigio piccolo margine">Nessuna consegna.</p>}
+      {p.note?.trim() && (
+        <details className="appunti">
+          <summary>Appunti di reparto</summary>
+          <p>{p.note}</p>
+        </details>
+      )}
+      {radici.length > 0 && (
+        <ul className="attivita">
+          {radici.map((a) => (
+            <Attivita key={a.id} a={a} figli={figliDi(a.id)} tutte={valutazioni} profili={profili}
+              az={az} apri={apri} paziente={p} nascondiLuna />
+          ))}
+        </ul>
+      )}
+      <form className="aggiungi" onSubmit={aggiungi}>
+        <input value={testo} onChange={(e) => setTesto(e.target.value)} placeholder="Valutazione da fare…" enterKeyHint="done" />
+        <input type="time" className="ora" value={ora} onChange={(e) => setOra(e.target.value)} aria-label="Ora" />
+        <button className="piu" aria-label="Aggiungi" disabled={!testo.trim()}>+</button>
+      </form>
+    </section>
+  )
+}
+
+function FormConsegna({ chiudi, az, paziente, letto, profili }) {
+  const [gravita, setGravita] = useState(paziente.gravita ?? 0)
+  const [ria, setRia] = useState(paziente.rianimazione ?? null)
+  const [allergie, setAllergie] = useState(paziente.allergie ?? '')
+  const [consegna, setConsegna] = useState(paziente.consegna ?? '')
+
+  function salva(e) {
+    e.preventDefault()
+    az.modificaPaziente(paziente, { gravita, rianimazione: ria, allergie: allergie.trim(), consegna })
+    chiudi()
+  }
+  function svuota() {
+    if (!confirm('Cancellare la consegna di questo paziente?')) return
+    az.modificaPaziente(paziente, { gravita: 0, rianimazione: null, allergie: '', consegna: '' })
+    chiudi()
+  }
+
+  return (
+    <Foglio titolo={`🌙 Consegna · letto ${letto?.nome ?? ''}`} chiudi={chiudi}>
+      <form onSubmit={salva} className="form">
+        <p><b>{paziente.nome}</b></p>
+        <div>
+          <div className="etichetta">Gravità</div>
+          <div className="segmenti">
+            {GRAVITA.map((g) => (
+              <button type="button" key={g.v} className={`seg grav-seg${g.v} ${gravita === g.v ? 'attivo' : ''}`}
+                onClick={() => setGravita(g.v)}>{g.v === 0 ? 'Nessuna' : g.nome}</button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="etichetta">Stato rianimatorio</div>
+          <div className="segmenti due">
+            {RIANIMAZIONE.map((r) => (
+              <button type="button" key={String(r.v)} className={`seg ${ria === r.v ? 'attivo' : ''}`}
+                onClick={() => setRia(r.v)}>{r.nome}</button>
+            ))}
+          </div>
+        </div>
+        <label>Allergie
+          <input value={allergie} onChange={(e) => setAllergie(e.target.value)} placeholder="es. penicillina, mezzo di contrasto" />
+        </label>
+        <label>Consegna per la guardia
+          <textarea rows={6} value={consegna} onChange={(e) => setConsegna(e.target.value)}
+            placeholder={'Notizie principali e cosa fare in caso di urgenza.\nes. In TAO (INR 2.8). Se peggioramento neurologico → TC urgente e avvisare neurochirurgo.'} />
+        </label>
+        {paziente.consegna_il && (
+          <p className="grigio piccolo">Ultimo aggiornamento {quando(paziente.consegna_il)}{profili[paziente.consegna_da] ? ` da ${profili[paziente.consegna_da]}` : ''}</p>
+        )}
+        <button className="btn primario">Salva consegna</button>
+        <p className="grigio piccolo">Le valutazioni da fare si aggiungono dalla scheda 🌙 Guardia, oppure con il pulsante 🌙 accanto al campo “Nuova attività”.</p>
+      </form>
+      {haConsegna(paziente) && (
+        <div className="sezione">
+          <button className="btn pericolo" onClick={svuota}>Cancella consegna</button>
+        </div>
+      )}
+    </Foglio>
+  )
+}
+
+// ---------------------------------------------------------------- PACCHETTI
+const norm = (t) => t.trim().toLowerCase()
+
+function FormPacchetto({ chiudi, az, paziente, letto, pacchetti, attivita, iniziale, apri }) {
+  const [selId, setSelId] = useState(iniziale || null)
+  const [spunte, setSpunte] = useState({})
+  const pac = pacchetti.find((p) => p.id === selId)
+  const esistenti = useMemo(
+    () => new Set(attivita.filter((a) => a.paziente_id === paziente.id && !a.fatta).map((a) => norm(a.testo))),
+    [attivita, paziente.id],
+  )
+
+  // quando scelgo un pacchetto: tutto spuntato tranne ciò che il paziente ha già
+  useEffect(() => {
+    if (!pac) return
+    const s = {}
+    pac.voci.forEach((v, i) => {
+      s[i] = !esistenti.has(norm(v.t))
+      ;(v.f || []).forEach((f, j) => { s[`${i}.${j}`] = true })
+    })
+    setSpunte(s)
+  }, [selId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const conta = pac
+    ? pac.voci.reduce((n, v, i) => n + (spunte[i] ? 1 + (v.f || []).filter((_, j) => spunte[`${i}.${j}`]).length : 0), 0)
+    : 0
+
+  function conferma() {
+    const voci = pac.voci
+      .map((v, i) => spunte[i] && { t: v.t, f: (v.f || []).filter((_, j) => spunte[`${i}.${j}`]) })
+      .filter(Boolean)
+    az.aggiungiPacchetto(paziente, voci)
+    chiudi()
+  }
+  const tutte = (val) => {
+    const s = {}
+    pac.voci.forEach((v, i) => { s[i] = val; (v.f || []).forEach((_, j) => { s[`${i}.${j}`] = val }) })
+    setSpunte(s)
+  }
+
+  if (!pac) {
+    return (
+      <Foglio titolo={`📋 Pacchetto · ${paziente.nome}`} chiudi={chiudi}>
+        <div className="elenco-pacchetti">
+          {pacchetti.length === 0 && <p className="grigio">Nessun pacchetto. Creane uno da Impostazioni → Gestisci pacchetti.</p>}
+          {pacchetti.map((p) => (
+            <button key={p.id} className="pacchetto" onClick={() => setSelId(p.id)}>
+              <span className="nome-pac">{p.nome}</span>
+              <span className="grigio piccolo">
+                {p.voci.length} attività
+                {p.voci.some((v) => v.f?.length) ? ` · ${p.voci.reduce((n, v) => n + (v.f?.length || 0), 0)} sotto-attività` : ''}
+              </span>
+              <span className="freccia">›</span>
+            </button>
+          ))}
+        </div>
+        <div className="sezione">
+          <button className="btn" onClick={() => apri({ tipo: 'gestionePacchetti' })}>Gestisci pacchetti</button>
+        </div>
+      </Foglio>
+    )
+  }
+
+  return (
+    <Foglio titolo={`📋 ${pac.nome}`} chiudi={chiudi}>
+      <p className="grigio piccolo">Letto {letto?.nome} · <b>{paziente.nome}</b> — togli la spunta a ciò che non serve.</p>
+      <div className="riga-azioni">
+        {!iniziale && <button className="btn link" onClick={() => setSelId(null)}>‹ Altri pacchetti</button>}
+        <span className="spazio" />
+        <button className="btn link" onClick={() => tutte(true)}>Tutte</button>
+        <button className="btn link" onClick={() => tutte(false)}>Nessuna</button>
+      </div>
+      <ul className="voci-pac">
+        {pac.voci.map((v, i) => {
+          const gia = esistenti.has(norm(v.t))
+          return (
+            <li key={i}>
+              <label className={`voce ${spunte[i] ? '' : 'spenta'}`}>
+                <input type="checkbox" checked={!!spunte[i]} onChange={(e) => setSpunte((s) => ({ ...s, [i]: e.target.checked }))} />
+                <span>{v.t}{gia && <small className="gia"> · già presente</small>}</span>
+              </label>
+              {v.f?.length > 0 && (
+                <ul>
+                  {v.f.map((f, j) => (
+                    <li key={j}>
+                      <label className={`voce sotto ${spunte[i] && spunte[`${i}.${j}`] ? '' : 'spenta'}`}>
+                        <input type="checkbox" disabled={!spunte[i]} checked={!!spunte[`${i}.${j}`]}
+                          onChange={(e) => setSpunte((s) => ({ ...s, [`${i}.${j}`]: e.target.checked }))} />
+                        <span>{f}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      <div className="piede-fisso">
+        <button className="btn primario largo" disabled={conta === 0} onClick={conferma}>
+          Aggiungi {conta} {conta === 1 ? 'attività' : 'attività'}
+        </button>
+      </div>
+    </Foglio>
+  )
+}
+
+// testo <-> voci:  una riga = attività; riga che inizia con "-" = sotto-attività della precedente
+const vociInTesto = (voci) => voci.map((v) => [v.t, ...(v.f || []).map((f) => `- ${f}`)].join('\n')).join('\n')
+function testoInVoci(txt) {
+  const voci = []
+  for (const riga of txt.split('\n')) {
+    const r = riga.trim()
+    if (!r) continue
+    if (/^[-–•*]/.test(r) && voci.length) (voci[voci.length - 1].f ??= []).push(r.replace(/^[-–•*]\s*/, ''))
+    else voci.push({ t: r.replace(/^[-–•*]\s*/, '') })
+  }
+  return voci
+}
+
+function GestionePacchetti({ chiudi, pacchetti, caricaPacchetti, mostraToast }) {
+  const [modifica, setModifica] = useState(null) // {id?, nome, testo}
+
+  async function salva(e) {
+    e.preventDefault()
+    const voci = testoInVoci(modifica.testo)
+    if (!modifica.nome.trim() || !voci.length) return mostraToast('Inserisci nome e almeno una attività', null, 'errore')
+    const row = { nome: modifica.nome.trim(), voci, aggiornato_il: new Date().toISOString() }
+    const q = modifica.id
+      ? supabase.from('pacchetti').update(row).eq('id', modifica.id)
+      : supabase.from('pacchetti').insert({ ...row, ordine: Math.max(0, ...pacchetti.map((p) => p.ordine)) + 1 })
+    const { error } = await q
+    if (error) return mostraToast(error.message.includes('duplicate') ? 'Esiste già un pacchetto con questo nome' : error.message, null, 'errore')
+    await caricaPacchetti()
+    setModifica(null)
+    mostraToast('Pacchetto salvato')
+  }
+  async function elimina() {
+    if (!confirm(`Eliminare il pacchetto "${modifica.nome}"? Le attività già aggiunte ai pazienti restano.`)) return
+    const { error } = await supabase.from('pacchetti').delete().eq('id', modifica.id)
+    if (error) return mostraToast(error.message, null, 'errore')
+    await caricaPacchetti()
+    setModifica(null)
+  }
+
+  if (modifica) {
+    return (
+      <Foglio titolo={modifica.id ? 'Modifica pacchetto' : 'Nuovo pacchetto'} chiudi={() => setModifica(null)}>
+        <form className="form" onSubmit={salva}>
+          <label>Nome
+            <input value={modifica.nome} onChange={(e) => setModifica({ ...modifica, nome: e.target.value })} placeholder="es. Ictus ischemico" required />
+          </label>
+          <label>Attività — una per riga; con “-” davanti diventa sotto-attività della riga sopra
+            <textarea rows={14} className="mono" value={modifica.testo}
+              onChange={(e) => setModifica({ ...modifica, testo: e.target.value })}
+              placeholder={'TC encefalo di controllo\nEsami ematici\n- Emocromo\n- PCR\nEcocolordoppler TSA'} />
+          </label>
+          <button className="btn primario">Salva pacchetto</button>
+        </form>
+        {modifica.id && (
+          <div className="sezione"><button className="btn pericolo" onClick={elimina}>Elimina pacchetto</button></div>
+        )}
+      </Foglio>
+    )
+  }
+
+  return (
+    <Foglio titolo="Pacchetti di attività" chiudi={chiudi}>
+      <div className="elenco-pacchetti">
+        {pacchetti.map((p) => (
+          <button key={p.id ?? p.nome} className="pacchetto" onClick={() => setModifica({ id: p.id, nome: p.nome, testo: vociInTesto(p.voci) })}>
+            <span className="nome-pac">{p.nome}</span>
+            <span className="grigio piccolo">{p.voci.length} attività</span>
+            <span className="freccia">✎</span>
+          </button>
+        ))}
+      </div>
+      <div className="sezione">
+        <button className="btn primario" onClick={() => setModifica({ nome: '', testo: '' })}>+ Nuovo pacchetto</button>
+      </div>
+    </Foglio>
+  )
+}
