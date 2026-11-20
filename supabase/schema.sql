@@ -274,3 +274,17 @@ select v.nome, v.ordine, v.voci::jsonb from (values
   ]')
 ) as v(nome, ordine, voci)
 where not exists (select 1 from public.pacchetti);
+
+-- =====================================================================
+--  PERMESSI DI ACCESSO ALLE TABELLE (solo utenti autenticati)
+--  Nei progetti Supabase recenti le tabelle create via SQL non sono
+--  accessibili all'app senza questi permessi. Chi può fare cosa riga per
+--  riga resta deciso dalle regole RLS definite sopra.
+-- =====================================================================
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+grant execute on function public.trasferisci_paziente(uuid, uuid) to authenticated;
+alter default privileges in schema public grant select, insert, update, delete on tables to authenticated;
+-- nessun accesso per chi non ha fatto login
+revoke all on all tables in schema public from anon;
