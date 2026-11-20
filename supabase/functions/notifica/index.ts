@@ -64,7 +64,11 @@ async function iscrizioniAttive(soloUtenti?: string[]) {
   return iscr.filter((s) => attivo(ok.get(s.user_id)));
 }
 
-const json = (d: unknown) => new Response(JSON.stringify(d), { headers: { "content-type": "application/json" } });
+// ogni risposta viene anche scritta nei Logs della funzione (Supabase -> Edge Functions -> notifica -> Logs)
+const json = (d: unknown) => {
+  console.log("notifica:", JSON.stringify(d));
+  return new Response(JSON.stringify(d), { headers: { "content-type": "application/json" } });
+};
 
 Deno.serve(async (req) => {
   let body: any;
@@ -115,8 +119,10 @@ Deno.serve(async (req) => {
   const titolo = `${a.urgente ? "🔴 " : ""}${a.guardia ? "🌙 Guardia · " : ""}${rep?.nome ?? "Reparto"} · Letto ${letto}`;
 
   let inviate = 0;
+  let destinatari = 0;
   if (assegnata && a.assegnata_a !== a.creata_da) {
     const iscr = await iscrizioniAttive([a.assegnata_a]);
+    destinatari += iscr.length;
     inviate += await invia(iscr, JSON.stringify({
       title: `👤 Assegnata a te · ${titolo}`, body: `${testo}${autore?.nome ? ` (da ${autore.nome})` : ""}`, url, tag: `assegnata-${a.id}`,
     }), a.urgente);
@@ -124,9 +130,13 @@ Deno.serve(async (req) => {
   if (nuova) {
     const iscr = (await iscrizioniAttive()).filter((s) =>
       s.user_id !== a.creata_da && s.user_id !== a.assegnata_a && (!s.reparti || s.reparti.includes(a.reparto_id)));
+    destinatari += iscr.length;
     inviate += await invia(iscr, JSON.stringify({
       title: titolo, body: `${testo}${autore?.nome ? ` (${autore.nome})` : ""}`, url, tag: `attivita-${a.id}`,
     }), a.urgente);
   }
-  return json({ inviate });
+  return json({
+    attivita: a.testo, inviate, destinatari,
+    nota: destinatari === 0 ? "nessun telefono iscritto a questo reparto (escluso chi ha scritto l'attività)" : undefined,
+  });
 });
