@@ -1,0 +1,60 @@
+# Costruisce l'app e la pubblica su Netlify a ogni modifica del ramo "main".
+# Le chiavi si inseriscono in: GitHub -> Settings -> Secrets and variables -> Actions
+#   NETLIFY_AUTH_TOKEN     codice di accesso creato su Netlify
+#   NETLIFY_SITE_ID        "App ID" / "Project ID" del progetto Netlify
+#   VITE_SUPABASE_URL      Project URL di Supabase
+#   VITE_SUPABASE_ANON_KEY chiave anon / publishable di Supabase (non quella secret)
+#   VITE_VAPID_PUBLIC_KEY  (facoltativa) chiave pubblica per le notifiche
+name: Pubblica su Netlify
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: pubblica-netlify
+  cancel-in-progress: true
+
+jobs:
+  pubblica:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Controllo chiavi
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: |
+          mancanti=""
+          for k in NETLIFY_AUTH_TOKEN NETLIFY_SITE_ID VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY; do
+            [ -n "${!k}" ] || mancanti="$mancanti $k"
+          done
+          if [ -n "$mancanti" ]; then
+            echo "::error::Mancano queste chiavi nei Secrets del repository:$mancanti"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Installa
+        run: npm ci
+
+      - name: Costruisci l'app
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
+        run: npm run build
+
+      - name: Pubblica su Netlify
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: npx --yes netlify-cli@27.20.1 deploy --prod --dir=dist --no-build --message "GitHub ${GITHUB_SHA::7}"
