@@ -1,7 +1,12 @@
 import { createClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY
+// tengo solo "https://xxxx.supabase.co": se nella chiave è stato incollato anche
+// un percorso (es. /rest/v1/) o uno spazio, lo scarto
+function soloIndirizzo(u) {
+  try { return new URL(String(u).trim()).origin } catch { return u }
+}
+const url = import.meta.env.VITE_SUPABASE_URL ? soloIndirizzo(import.meta.env.VITE_SUPABASE_URL) : undefined
+const key = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
 
 export const configurato = Boolean(url && key)
 
