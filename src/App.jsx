@@ -1096,6 +1096,9 @@ function Impostazioni({ chiudi, session, profili, setProfili, reparti, mostraToa
   const [sel, setSel] = useState([])
   const [pw, setPw] = useState('')
   const [occupato, setOccupato] = useState(false)
+  const [passoNotif, setPassoNotif] = useState('')
+  const [erroreNotif, setErroreNotif] = useState('')
+  const [perm, setPerm] = useState(push.permesso())
   const ok = push.supportato()
 
   useEffect(() => {
@@ -1116,14 +1119,17 @@ function Impostazioni({ chiudi, session, profili, setProfili, reparti, mostraToa
   }
   async function attivaNotifiche() {
     setOccupato(true)
+    setErroreNotif('')
     try {
       const tutti = sel.length === reparti.length
-      await push.attiva(tutti ? null : sel)
-      setNotif({ caricato: true, attive: true, reparti: tutti ? null : sel })
+      await push.attiva(tutti ? null : sel, setPassoNotif)
+      setNotif((n) => ({ ...n, attive: true, reparti: tutti ? null : sel }))
       mostraToast('Notifiche attive')
     } catch (e) {
-      mostraToast(e.message || String(e), null, 'errore')
+      setErroreNotif(e.message || String(e))
     }
+    setPassoNotif('')
+    setPerm(push.permesso())
     setOccupato(false)
   }
   async function disattivaNotifiche() {
@@ -1186,7 +1192,11 @@ function Impostazioni({ chiudi, session, profili, setProfili, reparti, mostraToa
               </button>
               {notif.attive && <button className="btn" disabled={occupato} onClick={disattivaNotifiche}>Disattiva</button>}
             </div>
-            {notif.attive && <p className="verde piccolo">✓ Notifiche attive su questo dispositivo</p>}
+            {passoNotif && <p className="grigio piccolo">⏳ {passoNotif}</p>}
+            {erroreNotif && <p className="info errore-box">{erroreNotif}</p>}
+            {notif.attive && !erroreNotif && <p className="verde piccolo">✓ Notifiche attive su questo dispositivo</p>}
+            <p className="grigio piccolo">Permesso del telefono: {
+              { granted: '✓ concesso', denied: '✗ bloccato', default: 'non ancora chiesto' }[perm] ?? perm}</p>
           </>
         )}
       </div>
