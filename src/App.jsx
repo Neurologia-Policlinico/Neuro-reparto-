@@ -249,6 +249,11 @@ function Principale({ session }) {
   const [richiesteAttesa, setRichiesteAttesa] = useState(0)
   const [soloMie, setSoloMie] = useState(false)
   const [evidenzia, setEvidenzia] = useState(null)  // paziente trovato con la ricerca
+  // attività con le sotto-attività aperte (ricordate su questo dispositivo)
+  const [sottoAperte, setSottoAperte] = useState(() => {
+    try { return new Set(JSON.parse(store.get('sottoAperte') || '[]')) } catch { return new Set() }
+  })
+  useEffect(() => { store.set('sottoAperte', JSON.stringify([...sottoAperte].slice(-300))) }, [sottoAperte])
   const [, setTick] = useState(0)                   // aggiorna scadenze ogni minuto
   const toastTimer = useRef()
   const richiesta = useRef(0)
@@ -526,7 +531,15 @@ function Principale({ session }) {
       return esegui(supabase.from('letti').delete().eq('id', l.id))
     },
     io: uid,
-  }), [uid, esegui, mostraToast, letti, repId])
+    aperta: (id) => sottoAperte.has(id),
+    alterna(id, val) {
+      setSottoAperte((xs) => {
+        const n = new Set(xs)
+        if (val ?? !n.has(id)) n.add(id); else n.delete(id)
+        return n
+      })
+    },
+  }), [uid, esegui, mostraToast, letti, repId, sottoAperte])
 
   // --- dati derivati
   const visibili = useMemo(() => {
@@ -766,6 +779,10 @@ function Attivita({ a, figli, tutte, profili, az, apri, paziente, sotto, nascond
   const mia = a.assegnata_a && a.assegnata_a === az.io
   const padreNascosto = a.parent_id && !sotto
   const padre = padreNascosto ? tutte.find((x) => x.id === a.parent_id) : null
+  const aperta = figli.length > 0 && az.aperta(a.id)
+  const daFare = figli.filter((f) => !f.fatta)
+  // se è chiusa ma dentro c'è qualcosa di urgente o scaduto, il pulsante diventa rosso
+  const allarme = !aperta && daFare.some((f) => f.urgente || T.etichettaScadenza(f)?.stato === 'scaduta')
   return (
     <li className={`att ${a.fatta ? 'fatta' : ''} ${a.urgente ? 'urg' : ''} ${sotto ? 'sotto' : ''} ${mia ? 'mia' : ''}`}>
       <div className="riga">
@@ -788,12 +805,19 @@ function Attivita({ a, figli, tutte, profili, az, apri, paziente, sotto, nascond
             {meta}
           </small>
         </div>
+        {figli.length > 0 && (
+          <button className={`apri-figli ${aperta ? 'aperta' : ''} ${allarme ? 'allarme' : ''}`}
+            aria-expanded={aperta} aria-label={aperta ? 'Chiudi sotto-attività' : 'Apri sotto-attività'}
+            onClick={() => az.alterna(a.id)}>
+            <span className="freccina">▸</span>{daFare.length || '✓'}
+          </button>
+        )}
         {!sotto && (
           <button className="icona sub" aria-label="Aggiungi sotto-attività"
             onClick={() => apri({ tipo: 'sotto', a, paziente })}>↳+</button>
         )}
       </div>
-      {figli.length > 0 && (
+      {aperta && (
         <ul className="figli">
           {figli.map((f) => (
             <Attivita key={f.id} a={f} figli={[]} tutte={tutte} profili={profili} az={az} apri={apri} paziente={paziente} sotto nascondiLuna={nascondiLuna} />
@@ -1048,6 +1072,7 @@ function FormSotto({ chiudi, az, a, paziente }) {
     e.preventDefault()
     righe.split('\n').map((s) => s.trim()).filter(Boolean)
       .forEach((t) => az.aggiungiAttivita(paziente, t, false, a.id, { guardia: a.guardia }))
+    az.alterna(a.id, true)
     chiudi()
   }
   return (

@@ -399,3 +399,43 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .voce .tag-rip { margin-left: 6px; }
 .letto .intest { gap: 6px; }
 .letto .intest .icona { min-width: 36px; }
+
+/* ---------- sotto-attività richiudibili */
+.apri-figli {
+  flex: none; align-self: center; display: inline-flex; align-items: center; gap: 3px;
+  min-width: 40px; height: 28px; padding: 0 8px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  font-size: 13px; font-weight: 700; position: relative;
+}
+.apri-figli::after { content: ""; position: absolute; inset: -8px -2px; } /* area di tocco */
+.apri-figli .freccina { display: inline-block; transition: transform .15s; font-size: 11px; }
+.apri-figli.aperta .freccina { transform: rotate(90deg); }
+.apri-figli.aperta { color: var(--primary); border-color: var(--primary); }
+.apri-figli.allarme { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* ---------- vista più compatta sul telefono */
+.lista { gap: 8px; padding-top: 8px; }
+.letto .intest { padding: 6px 4px 6px 10px; }
+.num { min-width: 30px; height: 30px; border-radius: 8px; font-size: 14px; }
+.nome { font-size: 16px; }
+.letto .intest .icona { min-width: 34px; min-height: 34px; font-size: 18px; }
+.note { margin: 0 10px 6px; padding: 6px 9px; font-size: 13px; -webkit-line-clamp: 2; }
+.consegna { margin: 0 10px 6px; padding: 7px 10px; gap: 4px; }
+.consegna .testo-consegna { font-size: 14px; }
+.att > .riga { gap: 8px; padding: 3px 4px 3px 10px; align-items: center; }
+.check { width: 24px; height: 24px; margin-top: 0; border-radius: 7px; font-size: 14px; }
+.check::after { inset: -10px; }
+.sotto .check { width: 20px; height: 20px; border-radius: 6px; font-size: 12px; }
+.testo { padding: 2px 0; font-size: 15px; line-height: 1.3; }
+.testo small { font-size: 11px; line-height: 1.25; }
+.sotto .testo { font-size: 14px; }
+.figli { padding-left: 30px; padding-bottom: 2px; }
+.icona.sub { min-width: 34px; min-height: 30px; font-size: 13px; }
+.tag-ora { font-size: 11px; padding: 0 5px; margin-right: 5px; }
+.tag-rip { font-size: 11px; margin-right: 5px; }
+.giorno { font-size: 11px; padding: 0 5px; }
+.badge { min-width: 20px; height: 20px; font-size: 11px; }
+.aggiungi { padding: 6px 6px 8px 10px; gap: 5px; }
+.aggiungi input { padding: 6px 9px; font-size: 16px; }
+.aggiungi .urg, .aggiungi .piu, .aggiungi .luna { width: 38px; }
+.letto.libero .intest { padding-top: 4px; padding-bottom: 4px; }
