@@ -80,6 +80,20 @@ export default function App() {
 }
 
 // ---------------------------------------------------------------- login
+function spiegaErroreLogin(e) {
+  const m = String(e?.message || e || '')
+  const c = e?.code || ''
+  if (c === 'invalid_credentials' || /invalid login credentials/i.test(m))
+    return 'Email o password non corretti.'
+  if (c === 'email_not_confirmed' || /not confirmed/i.test(m))
+    return 'Account non ancora confermato: in Supabase ricrea l\'utente spuntando "Auto Confirm User".'
+  if (/api key|apikey|jwt|unauthorized|no api key/i.test(m) || e?.status === 401)
+    return 'Chiave Supabase non valida nella configurazione dell\'app (VITE_SUPABASE_ANON_KEY).'
+  if (/failed to fetch|network|load failed|fetch/i.test(m))
+    return 'Impossibile collegarsi al server: controlla la connessione o l\'indirizzo Supabase (VITE_SUPABASE_URL).'
+  return `Accesso non riuscito: ${m || 'errore sconosciuto'}`
+}
+
 function Login() {
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
@@ -90,9 +104,14 @@ function Login() {
     e.preventDefault()
     setOccupato(true)
     setMsg('')
-    const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw })
+    let error
+    try {
+      ;({ error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw }))
+    } catch (e) {
+      error = e
+    }
     setOccupato(false)
-    if (error) setMsg('Email o password non corretti.')
+    if (error) setMsg(spiegaErroreLogin(error))
   }
   async function recupera() {
     if (!email.trim()) return setMsg('Scrivi prima la tua email.')
