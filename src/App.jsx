@@ -542,12 +542,17 @@ function Principale({ session }) {
   }), [uid, esegui, mostraToast, letti, repId, sottoAperte])
 
   // --- dati derivati
+  // solo le attività dei pazienti ancora ricoverati (quelle dei dimessi restano come storico)
+  const ricoverati = useMemo(
+    () => new Set(pazienti.filter((p) => !p.dimesso && p.reparto_id === repId).map((p) => p.id)),
+    [pazienti, repId],
+  )
   const visibili = useMemo(() => {
-    const xs = attivita.filter((a) => a.reparto_id === repId && (mostraFatte || !a.fatta))
+    const xs = attivita.filter((a) => a.reparto_id === repId && ricoverati.has(a.paziente_id) && (mostraFatte || !a.fatta))
     if (!soloMie) return xs
     const mie = new Set(xs.filter((a) => a.assegnata_a === uid).map((a) => a.id))
     return xs.filter((a) => mie.has(a.id) || mie.has(a.parent_id))
-  }, [attivita, repId, mostraFatte, soloMie, uid])
+  }, [attivita, repId, mostraFatte, soloMie, uid, ricoverati])
   const attPerPaz = useMemo(() => {
     const m = {}
     for (const a of visibili) (m[a.paziente_id] ??= []).push(a)
