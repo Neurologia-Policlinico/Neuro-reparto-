@@ -350,3 +350,52 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .dettagli-tecnici { font-size: 12px; color: var(--muted); text-align: center; }
 .dettagli-tecnici summary { cursor: pointer; }
 .dettagli-tecnici p { margin: 6px 0 0; }
+
+/* ---------- SCADENZE, RIPETIZIONI, ASSEGNAZIONI */
+.tag-ora.vicina { color: var(--warn); background: var(--warn-soft); }
+.tag-ora.scaduta { color: #fff; background: var(--danger); }
+.tag-rip { display: inline-block; font-size: 12px; color: var(--muted); margin-right: 6px; vertical-align: 1px; }
+.fatta .tag-ora { opacity: .6; }
+.att.mia > .riga { background: var(--primary-soft); }
+.assegnata { color: var(--primary); font-weight: 600; }
+.giorno {
+  flex: none; font-size: 12px; font-weight: 700; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px;
+}
+.letto.evidenziato { box-shadow: 0 0 0 3px var(--primary); transition: box-shadow .3s; }
+.icona.impost { position: relative; }
+.pallino {
+  position: absolute; top: 2px; right: 0; min-width: 18px; height: 18px; border-radius: 9px;
+  background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; padding: 0 4px;
+}
+
+/* ---------- AMMINISTRAZIONE */
+.schede { display: flex; gap: 6px; margin-bottom: 12px; }
+.scheda {
+  flex: 1; border: 1px solid var(--line); background: var(--card); border-radius: 10px;
+  padding: 9px 6px; font-weight: 600; font-size: 14px;
+}
+.scheda.attiva { background: var(--primary); border-color: var(--primary); color: #fff; }
+.elenco-admin { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.riga-admin {
+  display: flex; align-items: center; gap: 10px; text-align: left; width: 100%;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+}
+.riga-admin p { margin: 4px 0; }
+.riga-admin.cliccabile { cursor: pointer; }
+.riga-admin .freccia { font-size: 22px; color: var(--muted); }
+.azioni-verticali { display: flex; flex-direction: column; gap: 6px; }
+.azioni-verticali .btn { min-height: 38px; padding: 7px 12px; }
+.tag.admin { background: var(--primary); color: #fff; border-color: var(--primary); }
+.tag.spento { background: var(--danger-soft); color: var(--danger); border-color: var(--danger); }
+.messaggio {
+  white-space: pre-wrap; background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; user-select: all; margin: 0 0 10px;
+}
+.elenco-passi { margin: 0; padding-left: 18px; }
+.elenco-passi li { margin-bottom: 4px; }
+.foglio-testa .icona:first-child:not(:last-child) { font-size: 26px; }
+
+.voce .tag-rip { margin-left: 6px; }
+.letto .intest { gap: 6px; }
+.letto .intest .icona { min-width: 36px; }

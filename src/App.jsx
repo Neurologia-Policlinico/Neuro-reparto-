@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase, configurato, infoConfigurazione } from './supabase'
 import * as push from './push'
+import Foglio from './Foglio'
+import Amministrazione from './Amministrazione'
+import * as T from './tempi'
 
 // ---------------------------------------------------------------- utilità
 export const GUARDIA = 'guardia'
@@ -36,7 +39,8 @@ const upsert = (xs, r) => {
 const ordLetti = (a, b) =>
   a.ordine - b.ordine || a.nome.localeCompare(b.nome, 'it', { numeric: true })
 const ordAtt = (a, b) =>
-  a.fatta - b.fatta || b.urgente - a.urgente || a.creata_il.localeCompare(b.creata_il)
+  a.fatta - b.fatta || b.urgente - a.urgente ||
+  (a.scadenza || '9').localeCompare(b.scadenza || '9') || a.creata_il.localeCompare(b.creata_il)
 
 function quando(iso) {
   if (!iso) return ''
@@ -94,7 +98,59 @@ function spiegaErroreLogin(e) {
   return `Accesso non riuscito: ${m || 'errore sconosciuto'}`
 }
 
+function RichiestaAccesso({ indietro }) {
+  const [v, setV] = useState({ nome: '', email: '', messaggio: '' })
+  const [msg, setMsg] = useState('')
+  const [inviata, setInviata] = useState(false)
+  const [occupato, setOccupato] = useState(false)
+  async function invia(e) {
+    e.preventDefault()
+    setOccupato(true)
+    setMsg('')
+    const { error } = await supabase.from('richieste_accesso').insert({
+      nome: v.nome.trim(), email: v.email.trim().toLowerCase(), messaggio: v.messaggio.trim(),
+    })
+    setOccupato(false)
+    if (!error) return setInviata(true)
+    if (/duplicate|unique/i.test(error.message)) setMsg('C\'è già una richiesta in attesa per questa email.')
+    else if (/check constraint/i.test(error.message)) setMsg('Controlla nome ed email.')
+    else setMsg(`Invio non riuscito: ${error.message}`)
+  }
+  if (inviata) {
+    return (
+      <div className="centro">
+        <div className="box">
+          <h1>Richiesta inviata ✓</h1>
+          <p>Un amministratore la controllerà e ti invierà le credenziali per entrare.</p>
+          <button className="btn" onClick={indietro}>Torna al login</button>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className="centro">
+      <form className="box" onSubmit={invia}>
+        <h1>Richiedi accesso</h1>
+        <label>Nome e cognome
+          <input value={v.nome} onChange={(e) => setV({ ...v, nome: e.target.value })} required minLength={2} maxLength={100} />
+        </label>
+        <label>Email
+          <input type="email" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} required />
+        </label>
+        <label>Ruolo / reparto <span className="grigio">(facoltativo)</span>
+          <input value={v.messaggio} onChange={(e) => setV({ ...v, messaggio: e.target.value })} maxLength={500}
+            placeholder="es. Specializzando 2° anno, Stroke" />
+        </label>
+        {msg && <p className="avviso">{msg}</p>}
+        <button className="btn primario" disabled={occupato}>{occupato ? 'Invio…' : 'Invia richiesta'}</button>
+        <button type="button" className="btn link" onClick={indietro}>‹ Torna al login</button>
+      </form>
+    </div>
+  )
+}
+
 function Login() {
+  const [richiedi, setRichiedi] = useState(false)
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
   const [msg, setMsg] = useState('')
@@ -121,6 +177,7 @@ function Login() {
     setMsg(error ? error.message : 'Ti abbiamo inviato un\'email per reimpostare la password.')
   }
 
+  if (richiedi) return <RichiestaAccesso indietro={() => setRichiedi(false)} />
   return (
     <div className="centro">
       <form className="box" onSubmit={entra}>
@@ -135,6 +192,7 @@ function Login() {
         {msg && <p className="avviso">{msg}</p>}
         <button className="btn primario" disabled={occupato}>{occupato ? 'Accesso…' : 'Entra'}</button>
         <button type="button" className="btn link" onClick={recupera}>Password dimenticata?</button>
+        <button type="button" className="btn" onClick={() => setRichiedi(true)}>Non hai un account? Richiedi accesso</button>
         <details className="dettagli-tecnici">
           <summary>Dettagli tecnici</summary>
           <p>Progetto Supabase: <code>{infoConfigurazione().progetto}</code></p>
@@ -186,6 +244,12 @@ function Principale({ session }) {
   const [modale, setModale] = useState(null)
   const [toast, setToast] = useState(null)
   const [pacchetti, setPacchetti] = useState([])
+  const [medici, setMedici] = useState([])          // profili completi (attivi e no)
+  const [io, setIo] = useState(null)                // il mio profilo
+  const [richiesteAttesa, setRichiesteAttesa] = useState(0)
+  const [soloMie, setSoloMie] = useState(false)
+  const [evidenzia, setEvidenzia] = useState(null)  // paziente trovato con la ricerca
+  const [, setTick] = useState(0)                   // aggiorna scadenze ogni minuto
   const toastTimer = useRef()
   const richiesta = useRef(0)
   const profiliRef = useRef(profili)
@@ -203,9 +267,31 @@ function Principale({ session }) {
 
   // --- dati comuni
   const caricaProfili = useCallback(async () => {
-    const { data } = await supabase.from('profili').select('id, nome')
-    if (data) setProfili(Object.fromEntries(data.map((p) => [p.id, p.nome])))
+    const { data } = await supabase.from('profili').select('*').order('nome')
+    if (!data) return
+    setProfili(Object.fromEntries(data.map((p) => [p.id, p.nome])))
+    setMedici(data)
+    setIo(data.find((p) => p.id === uid) ?? { id: uid, attivo: false })
+  }, [uid])
+
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 60e3)
+    return () => clearInterval(t)
   }, [])
+
+  // amministratori: richieste di accesso in attesa (e apertura da notifica)
+  const admin = io?.ruolo === 'admin'
+  useEffect(() => {
+    if (!admin) return
+    supabase.from('richieste_accesso').select('id', { count: 'exact', head: true }).eq('stato', 'in_attesa')
+      .then(({ count }) => setRichiesteAttesa(count || 0))
+    const u = new URL(location.href)
+    if (u.searchParams.get('admin')) {
+      setModale({ tipo: 'admin', iniziale: u.searchParams.get('admin') })
+      u.searchParams.delete('admin')
+      history.replaceState(null, '', u)
+    }
+  }, [admin])
 
   useEffect(() => {
     supabase.from('reparti').select('*').order('ordine').then(({ data, error }) => {
@@ -237,8 +323,9 @@ function Principale({ session }) {
     if (!('serviceWorker' in navigator)) return
     const h = (e) => {
       if (e.data?.tipo === 'apri') {
-        const r = new URL(e.data.url).searchParams.get('reparto')
-        if (r) setRepId(r)
+        const q = new URL(e.data.url).searchParams
+        if (q.get('reparto')) setRepId(q.get('reparto'))
+        if (q.get('admin')) setModale({ tipo: 'admin', iniziale: q.get('admin') })
       }
     }
     navigator.serviceWorker.addEventListener('message', h)
@@ -328,7 +415,9 @@ function Principale({ session }) {
       const row = {
         id: uuid(), paziente_id: paz.id, reparto_id: paz.reparto_id, parent_id: parentId,
         testo, urgente, fatta: false, creata_da: uid, creata_il: new Date().toISOString(),
-        fatta_da: null, fatta_il: null, guardia: Boolean(extra.guardia), ora: extra.ora || null,
+        fatta_da: null, fatta_il: null, guardia: Boolean(extra.guardia), ora: null,
+        scadenza: extra.scadenza || null, ripeti_ore: extra.ripeti_ore || null,
+        ripeti_orari: extra.ripeti_orari || null, assegnata_a: extra.assegnata_a || null,
       }
       setAttivita((xs) => upsert(xs, row))
       esegui(supabase.from('attivita').insert(row))
@@ -339,11 +428,16 @@ function Principale({ session }) {
       const base = () => ({
         paziente_id: paz.id, reparto_id: paz.reparto_id, urgente: false, fatta: false,
         creata_da: uid, creata_il: new Date(t0 + k++).toISOString(), // mantiene l'ordine del pacchetto
-        fatta_da: null, fatta_il: null, guardia: false, ora: null,
+        fatta_da: null, fatta_il: null, guardia: false, ora: null, assegnata_a: null,
+        scadenza: null, ripeti_ore: null, ripeti_orari: null,
       })
       const rows = []
       for (const v of voci) {
-        const padre = { ...base(), id: uuid(), parent_id: null, testo: v.t }
+        const tempi = {
+          ripeti_ore: v.ripeti_ore || null, ripeti_orari: v.ripeti_orari || null,
+          scadenza: T.primaScadenza(v)?.toISOString() ?? null,
+        }
+        const padre = { ...base(), ...tempi, id: uuid(), parent_id: null, testo: v.t }
         rows.push(padre)
         for (const f of v.f || []) rows.push({ ...base(), id: uuid(), parent_id: padre.id, testo: f })
       }
@@ -361,10 +455,30 @@ function Principale({ session }) {
     },
     spunta(a, tutte) {
       const val = !a.fatta
-      const figli = val ? tutte.filter((x) => x.parent_id === a.id && !x.fatta).map((x) => x.id) : []
+      const figliTutti = tutte.filter((x) => x.parent_id === a.id)
+      const figli = val ? figliTutti.filter((x) => !x.fatta).map((x) => x.id) : []
       const ids = [a.id, ...figli]
       az.impostaFatta(ids, val)
-      if (val) mostraToast(`✓ ${a.testo}`, () => az.impostaFatta(ids, false))
+      if (!val) return
+      // attività ripetuta: creo subito la prossima (con le sue sotto-attività)
+      const quando = T.ripetuta(a) ? T.prossimaScadenza(a) : null
+      if (!quando) return mostraToast(`✓ ${a.testo}`, () => az.impostaFatta(ids, false))
+      const ora = new Date().toISOString()
+      const copia = (x, extra) => ({
+        ...x, id: uuid(), fatta: false, fatta_da: null, fatta_il: null, creata_da: uid, creata_il: ora, ...extra,
+      })
+      const nuova = copia(a, { scadenza: quando.toISOString() })
+      const nuoviFigli = figliTutti.map((f) => copia(f, { parent_id: nuova.id, scadenza: null }))
+      const righe = [nuova, ...nuoviFigli]
+      setAttivita((xs) => righe.reduce(upsert, xs))
+      esegui(supabase.from('attivita').insert(righe))
+      const etichetta = T.etichettaScadenza(nuova)?.testo
+      mostraToast(`✓ ${a.testo} · prossima ${etichetta}`, () => {
+        const via = righe.map((r) => r.id)
+        setAttivita((xs) => xs.filter((x) => !via.includes(x.id)))
+        esegui(supabase.from('attivita').delete().in('id', via))
+        az.impostaFatta(ids, false)
+      })
     },
     modificaAttivita(a, patch) {
       setAttivita((xs) => upsert(xs, { ...a, ...patch }))
@@ -374,10 +488,10 @@ function Principale({ session }) {
       setAttivita((xs) => xs.filter((x) => x.id !== a.id && x.parent_id !== a.id))
       esegui(supabase.from('attivita').delete().eq('id', a.id))
     },
-    async ricovera(letto, nome, note) {
+    async ricovera(letto, nome, note, dataRicovero) {
       const row = {
         id: uuid(), letto_id: letto.id, reparto_id: letto.reparto_id, nome, note,
-        dimesso: false, creato_il: new Date().toISOString(),
+        dimesso: false, creato_il: new Date().toISOString(), data_ricovero: dataRicovero || T.oggiLocale(),
       }
       setPazienti((xs) => upsert(xs, row))
       return (await esegui(supabase.from('pazienti').insert(row))) ? row : null
@@ -411,13 +525,16 @@ function Principale({ session }) {
       setLetti((xs) => xs.filter((x) => x.id !== l.id))
       return esegui(supabase.from('letti').delete().eq('id', l.id))
     },
+    io: uid,
   }), [uid, esegui, mostraToast, letti, repId])
 
   // --- dati derivati
-  const visibili = useMemo(
-    () => attivita.filter((a) => a.reparto_id === repId && (mostraFatte || !a.fatta)),
-    [attivita, repId, mostraFatte],
-  )
+  const visibili = useMemo(() => {
+    const xs = attivita.filter((a) => a.reparto_id === repId && (mostraFatte || !a.fatta))
+    if (!soloMie) return xs
+    const mie = new Set(xs.filter((a) => a.assegnata_a === uid).map((a) => a.id))
+    return xs.filter((a) => mie.has(a.id) || mie.has(a.parent_id))
+  }, [attivita, repId, mostraFatte, soloMie, uid])
   const attPerPaz = useMemo(() => {
     const m = {}
     for (const a of visibili) (m[a.paziente_id] ??= []).push(a)
@@ -434,15 +551,30 @@ function Principale({ session }) {
   )
   const aperte = visibili.filter((a) => !a.fatta).length
   const urgenti = visibili.filter((a) => !a.fatta && a.urgente).length
+  const adesso = new Date()
+  const scadute = visibili.filter((a) => T.etichettaScadenza(a, adesso)?.stato === 'scaduta').length
   const occupati = lettiRep.filter((l) => pazPerLetto[l.id]).length
   const repCorrente = reparti.find((r) => r.id === repId)
 
-  const lettiMostrati = soloConAttivita
+  const lettiMostrati = soloConAttivita || soloMie
     ? lettiRep.filter((l) => {
         const p = pazPerLetto[l.id]
         return p && (attPerPaz[p.id] || []).some((a) => !a.fatta)
       })
     : lettiRep
+
+  if (io && (!io.attivo || (io.scadenza && io.scadenza < T.oggiLocale()))) {
+    return (
+      <div className="centro">
+        <div className="box">
+          <h1>Accesso non attivo</h1>
+          <p>{!io.attivo ? 'Il tuo account è stato disattivato' : 'Il tuo accesso è scaduto'}.
+            Chiedi a un amministratore dell'app di riattivarlo.</p>
+          <button className="btn" onClick={() => supabase.auth.signOut()}>Esci</button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="app">
@@ -452,7 +584,10 @@ function Principale({ session }) {
           <span className={`stato ${live ? 'on' : ''}`} title={live ? 'Collegato in tempo reale' : 'Connessione…'}>
             {live ? 'live' : '…'}
           </span>
-          <button className="icona" aria-label="Impostazioni" onClick={() => setModale({ tipo: 'impostazioni' })}>⚙︎</button>
+          <button className="icona" aria-label="Cerca paziente" onClick={() => setModale({ tipo: 'cerca' })}>🔍</button>
+          <button className="icona impost" aria-label="Impostazioni" onClick={() => setModale({ tipo: 'impostazioni' })}>
+            ⚙︎{admin && richiesteAttesa > 0 && <span className="pallino">{richiesteAttesa}</span>}
+          </button>
         </div>
         <nav className="reparti">
           <button className={`chip guardia ${repId === GUARDIA ? 'attivo' : ''}`} onClick={() => setRepId(GUARDIA)}>
@@ -467,8 +602,10 @@ function Principale({ session }) {
         {repId !== GUARDIA && <div className="riepilogo">
           <span><b>{aperte}</b> da fare</span>
           {urgenti > 0 && <span className="rosso"><b>{urgenti}</b> {urgenti === 1 ? 'urgente' : 'urgenti'}</span>}
+          {scadute > 0 && <span className="rosso"><b>{scadute}</b> {scadute === 1 ? 'scaduta' : 'scadute'}</span>}
           <span>{occupati}/{lettiRep.length} letti</span>
           <span className="spazio" />
+          <button className={`mini ${soloMie ? 'attivo' : ''}`} onClick={() => setSoloMie((v) => !v)}>Mie</button>
           <button className={`mini ${soloConAttivita ? 'attivo' : ''}`} onClick={() => {
             setSoloConAttivita((v) => { store.set('soloConAttivita', v ? '0' : '1'); return !v })
           }}>Con attività</button>
@@ -486,7 +623,7 @@ function Principale({ session }) {
       <main className="lista">
         {!caricato && <p className="vuoto">Caricamento…</p>}
         {caricato && lettiMostrati.length === 0 && (
-          <p className="vuoto">{soloConAttivita ? 'Nessuna attività da fare 🎉' : 'Nessun letto.'}</p>
+          <p className="vuoto">{soloMie ? 'Nessuna attività assegnata a te 🎉' : soloConAttivita ? 'Nessuna attività da fare 🎉' : 'Nessun letto.'}</p>
         )}
         {lettiMostrati.map((l) => (
           <Letto
@@ -497,9 +634,10 @@ function Principale({ session }) {
             profili={profili}
             az={az}
             apri={setModale}
+            evidenziato={evidenzia && pazPerLetto[l.id]?.id === evidenzia}
           />
         ))}
-        {caricato && !soloConAttivita && (
+        {caricato && !soloConAttivita && !soloMie && (
           <button className="btn tratteggio" onClick={() => setModale({ tipo: 'nuovoLetto' })}>+ Aggiungi letto</button>
         )}
       </main>
@@ -522,6 +660,11 @@ function Principale({ session }) {
           pacchetti={pacchetti}
           caricaPacchetti={caricaPacchetti}
           attivita={attivita}
+          medici={medici}
+          io={io}
+          richiesteAttesa={richiesteAttesa}
+          setRichiesteAttesa={setRichiesteAttesa}
+          vaiA={(p) => { setRepId(p.reparto_id); setEvidenzia(p.id); setTimeout(() => setEvidenzia(null), 4000) }}
         />
       )}
 
@@ -538,10 +681,14 @@ function Principale({ session }) {
 }
 
 // ---------------------------------------------------------------- scheda letto
-function Letto({ letto, paziente, attivita, profili, az, apri }) {
+function Letto({ letto, paziente, attivita, profili, az, apri, evidenziato }) {
   const [testo, setTesto] = useState('')
   const [urgente, setUrgente] = useState(false)
   const [perGuardia, setPerGuardia] = useState(false)
+  const rif = useRef()
+  useEffect(() => {
+    if (evidenziato) rif.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [evidenziato])
 
   if (!paziente) {
     return (
@@ -573,16 +720,16 @@ function Letto({ letto, paziente, attivita, profili, az, apri }) {
   }
 
   return (
-    <section className={`letto ${haUrgenti ? 'urgente' : ''}`}>
+    <section ref={rif} className={`letto ${haUrgenti ? 'urgente' : ''} ${evidenziato ? 'evidenziato' : ''}`}>
       <div className="intest" onClick={() => apri({ tipo: 'paziente', paziente, letto })}>
         <span className="num">{letto.nome}</span>
         <span className="nome">{paziente.nome}</span>
+        {paziente.data_ricovero && <span className="giorno" title="Giornata di ricovero">G{T.giornoRicovero(paziente.data_ricovero)}</span>}
         {aperte > 0 && <span className="badge">{aperte}</span>}
         <button className="icona" aria-label="Aggiungi pacchetto di attività"
           onClick={(e) => { e.stopPropagation(); apri({ tipo: 'pacchetto', paziente, letto }) }}>📋</button>
         <button className="icona" aria-label="Consegna per la guardia"
           onClick={(e) => { e.stopPropagation(); apri({ tipo: 'consegna', paziente, letto }) }}>🌙</button>
-        <button className="icona" aria-label="Modifica paziente">✎</button>
       </div>
       {haConsegna(paziente) && (
         <BoxConsegna paziente={paziente} compatto onClick={() => apri({ tipo: 'consegna', paziente, letto })} />
@@ -614,10 +761,13 @@ function Attivita({ a, figli, tutte, profili, az, apri, paziente, sotto, nascond
   const meta = a.fatta
     ? `fatta da ${profili[a.fatta_da] ?? '—'} · ${quando(a.fatta_il)}`
     : `${profili[a.creata_da] ?? ''} · ${quando(a.creata_il)}`
+  const sc = T.etichettaScadenza(a)
+  const rip = T.testoRipeti(a)
+  const mia = a.assegnata_a && a.assegnata_a === az.io
   const padreNascosto = a.parent_id && !sotto
   const padre = padreNascosto ? tutte.find((x) => x.id === a.parent_id) : null
   return (
-    <li className={`att ${a.fatta ? 'fatta' : ''} ${a.urgente ? 'urg' : ''} ${sotto ? 'sotto' : ''}`}>
+    <li className={`att ${a.fatta ? 'fatta' : ''} ${a.urgente ? 'urg' : ''} ${sotto ? 'sotto' : ''} ${mia ? 'mia' : ''}`}>
       <div className="riga">
         <button
           className="check"
@@ -629,10 +779,14 @@ function Attivita({ a, figli, tutte, profili, az, apri, paziente, sotto, nascond
         <div className="testo" onClick={() => apri({ tipo: 'attivita', a, paziente })}>
           <span>
             {a.guardia && !nascondiLuna && <span className="tag-g" title="Valutazione per la guardia">🌙</span>}
-            {a.ora && <span className="tag-ora">{a.ora}</span>}
+            {sc && <span className={`tag-ora ${sc.stato}`}>{sc.stato === 'scaduta' ? '⚠ ' : ''}{sc.testo}</span>}
+            {rip && <span className="tag-rip" title="Si ripete">🔁 {rip}</span>}
             {padre ? <span className="grigio">{padre.testo} › </span> : null}{a.testo}
           </span>
-          <small>{meta}</small>
+          <small>
+            {a.assegnata_a && <b className="assegnata">→ {mia ? 'te' : profili[a.assegnata_a] ?? '—'} · </b>}
+            {meta}
+          </small>
         </div>
         {!sotto && (
           <button className="icona sub" aria-label="Aggiungi sotto-attività"
@@ -651,25 +805,6 @@ function Attivita({ a, figli, tutte, profili, az, apri, paziente, sotto, nascond
 }
 
 // ---------------------------------------------------------------- finestre
-function Foglio({ titolo, chiudi, children }) {
-  useEffect(() => {
-    const h = (e) => e.key === 'Escape' && chiudi()
-    window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
-  }, [chiudi])
-  return (
-    <div className="velo" onClick={chiudi}>
-      <div className="foglio" onClick={(e) => e.stopPropagation()} role="dialog" aria-label={titolo}>
-        <div className="foglio-testa">
-          <h2>{titolo}</h2>
-          <button className="icona" onClick={chiudi} aria-label="Chiudi">✕</button>
-        </div>
-        {children}
-      </div>
-    </div>
-  )
-}
-
 function Modale(props) {
   const { m, chiudi } = props
   switch (m.tipo) {
@@ -683,6 +818,8 @@ function Modale(props) {
     case 'consegna': return <FormConsegna {...props} paziente={m.paziente} letto={m.letto} />
     case 'pacchetto': return <FormPacchetto {...props} paziente={m.paziente} letto={m.letto} iniziale={m.pacchettoId} />
     case 'gestionePacchetti': return <GestionePacchetti {...props} />
+    case 'cerca': return <Cerca {...props} />
+    case 'admin': return <Amministrazione {...props} iniziale={m.iniziale} aggiornaConteggio={props.setRichiesteAttesa} />
     default: chiudi(); return null
   }
 }
@@ -691,6 +828,7 @@ function FormPaziente({ chiudi, az, letto, paziente, reparti, repId, pacchetti =
   const [nome, setNome] = useState(paziente?.nome ?? '')
   const [pacchettoId, setPacchettoId] = useState('')
   const [note, setNote] = useState(paziente?.note ?? '')
+  const [dataRic, setDataRic] = useState(paziente?.data_ricovero ?? T.oggiLocale())
   const [liberi, setLiberi] = useState(null)
   const [dest, setDest] = useState('')
 
@@ -709,8 +847,8 @@ function FormPaziente({ chiudi, az, letto, paziente, reparti, repId, pacchetti =
   async function salva(e) {
     e.preventDefault()
     if (!nome.trim()) return
-    if (paziente) { az.modificaPaziente(paziente, { nome: nome.trim(), note }); return chiudi() }
-    const nuovo = await az.ricovera(letto, nome.trim(), note)
+    if (paziente) { az.modificaPaziente(paziente, { nome: nome.trim(), note, data_ricovero: dataRic || T.oggiLocale() }); return chiudi() }
+    const nuovo = await az.ricovera(letto, nome.trim(), note, dataRic)
     if (nuovo && pacchettoId) apri({ tipo: 'pacchetto', paziente: nuovo, letto, pacchettoId })
     else chiudi()
   }
@@ -725,6 +863,9 @@ function FormPaziente({ chiudi, az, letto, paziente, reparti, repId, pacchetti =
       <form onSubmit={salva} className="form">
         <label>Paziente
           <input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Cognome Nome" autoFocus={!paziente} required />
+        </label>
+        <label>Data di ricovero <span className="grigio">(G{T.giornoRicovero(dataRic) ?? 1} oggi)</span>
+          <input type="date" value={dataRic} max={T.oggiLocale()} onChange={(e) => setDataRic(e.target.value)} />
         </label>
         <label>Appunti
           <textarea rows={5} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Diagnosi, terapia, cose da ricordare…" />
@@ -802,16 +943,33 @@ function FormLetto({ chiudi, az, letto, lettiRep, pazPerLetto }) {
   )
 }
 
-function FormAttivita({ chiudi, az, a, paziente, profili }) {
+function FormAttivita({ chiudi, az, a, paziente, profili, medici = [] }) {
   const [testo, setTesto] = useState(a.testo)
   const [guardia, setGuardia] = useState(a.guardia)
-  const [ora, setOra] = useState(a.ora ?? '')
+  const [scad, setScad] = useState(T.inInputLocale(a.scadenza))
+  const tipoRip = a.ripeti_ore ? 'ore' : T.leggiOrari(a.ripeti_orari).length ? 'orari' : ''
+  const [rip, setRip] = useState(tipoRip)
+  const [ogni, setOgni] = useState(a.ripeti_ore || 6)
+  const [orari, setOrari] = useState(T.leggiOrari(a.ripeti_orari).join(' ') || '08:00 12:00 18:00')
+  const [assegnata, setAssegnata] = useState(a.assegnata_a || '')
+  const oggi = T.oggiLocale()
+  const attivi = medici.filter((m) => m.attivo && (!m.scadenza || m.scadenza >= oggi))
+
   function salva(e) {
     e.preventDefault()
+    const nuovo = {
+      testo: testo.trim() || a.testo,
+      guardia,
+      ripeti_ore: rip === 'ore' ? Number(ogni) : null,
+      ripeti_orari: rip === 'orari' ? (T.leggiOrari(orari).join(',') || null) : null,
+      assegnata_a: assegnata || null,
+    }
+    let sc = T.daInputLocale(scad)
+    // ripetizione appena impostata e nessun orario: parto dalla prima scadenza utile
+    if (!sc && rip && !tipoRip) sc = T.primaScadenza(nuovo)?.toISOString() ?? null
+    nuovo.scadenza = sc
     const patch = {}
-    if (testo.trim() && testo.trim() !== a.testo) patch.testo = testo.trim()
-    if (guardia !== a.guardia) patch.guardia = guardia
-    if ((ora || null) !== (a.ora ?? null)) patch.ora = ora || null
+    for (const k of Object.keys(nuovo)) if ((nuovo[k] ?? null) !== (a[k] ?? null)) patch[k] = nuovo[k]
     if (Object.keys(patch).length) az.modificaAttivita(a, patch)
     chiudi()
   }
@@ -821,15 +979,51 @@ function FormAttivita({ chiudi, az, a, paziente, profili }) {
         <label>Attività
           <textarea rows={3} value={testo} onChange={(e) => setTesto(e.target.value)} />
         </label>
-        <div className="riga-form">
-          <label className="spunta cresce">
-            <input type="checkbox" checked={guardia} onChange={(e) => setGuardia(e.target.checked)} />
-            🌙 Per la guardia
-          </label>
-          <label className="ora-label">Ora
-            <input type="time" value={ora} onChange={(e) => setOra(e.target.value)} />
-          </label>
+        <label>Da fare entro
+          <div className="riga-form">
+            <input type="datetime-local" value={scad} onChange={(e) => setScad(e.target.value)} />
+            {scad && <button type="button" className="btn" onClick={() => setScad('')}>Togli</button>}
+          </div>
+        </label>
+        <div className="bottoni">
+          {[['+1h', 1], ['+4h', 4], ['Domani 8:00', 'domani']].map(([t, v]) => (
+            <button type="button" key={t} className="btn" onClick={() => {
+              const d = new Date()
+              if (v === 'domani') { d.setDate(d.getDate() + 1); d.setHours(8, 0, 0, 0) } else d.setTime(d.getTime() + v * 3600e3)
+              setScad(T.inInputLocale(d.toISOString()))
+            }}>{t}</button>
+          ))}
         </div>
+        <label>Si ripete
+          <select value={rip} onChange={(e) => setRip(e.target.value)}>
+            <option value="">No</option>
+            <option value="ore">Ogni N ore</option>
+            <option value="orari">A orari fissi</option>
+          </select>
+        </label>
+        {rip === 'ore' && (
+          <label>Ogni quante ore
+            <select value={ogni} onChange={(e) => setOgni(e.target.value)}>
+              {[1, 2, 3, 4, 6, 8, 12, 24].map((n) => <option key={n} value={n}>ogni {n} {n === 1 ? 'ora' : 'ore'}</option>)}
+            </select>
+          </label>
+        )}
+        {rip === 'orari' && (
+          <label>Orari <span className="grigio">(es. 08:00 12:00 18:00)</span>
+            <input value={orari} onChange={(e) => setOrari(e.target.value)} inputMode="numeric" />
+          </label>
+        )}
+        {rip && <p className="grigio piccolo">Quando la spunti, compare subito la prossima con il nuovo orario.</p>}
+        <label>Assegnata a
+          <select value={assegnata} onChange={(e) => setAssegnata(e.target.value)}>
+            <option value="">Nessuno</option>
+            {attivi.map((m) => <option key={m.id} value={m.id}>{m.nome || m.email}{m.id === az.io ? ' (tu)' : ''}</option>)}
+          </select>
+        </label>
+        <label className="spunta">
+          <input type="checkbox" checked={guardia} onChange={(e) => setGuardia(e.target.checked)} />
+          🌙 Per la guardia
+        </label>
         <p className="grigio piccolo">
           Creata da {profili[a.creata_da] ?? '—'} · {quando(a.creata_il)}
           {a.fatta && <><br />Fatta da {profili[a.fatta_da] ?? '—'} · {quando(a.fatta_il)}</>}
@@ -870,7 +1064,7 @@ function FormSotto({ chiudi, az, a, paziente }) {
   )
 }
 
-function Impostazioni({ chiudi, session, profili, setProfili, reparti, mostraToast, apri }) {
+function Impostazioni({ chiudi, session, profili, setProfili, reparti, mostraToast, apri, io, richiesteAttesa }) {
   const uid = session.user.id
   const [nome, setNome] = useState(profili[uid] ?? '')
   const [notif, setNotif] = useState({ caricato: false, attive: false, reparti: null })
@@ -881,8 +1075,8 @@ function Impostazioni({ chiudi, session, profili, setProfili, reparti, mostraToa
 
   useEffect(() => {
     if (!ok) return
-    push.statoAttuale().then((s) => {
-      setNotif({ caricato: true, ...s })
+    Promise.all([push.statoAttuale(), push.chiavePubblica()]).then(([s, k]) => {
+      setNotif({ caricato: true, configurate: Boolean(k), ...s })
       setSel(s.reparti ?? reparti.map((r) => r.id))
     }).catch(() => setNotif({ caricato: true, attive: false }))
   }, [ok, reparti])
@@ -922,6 +1116,13 @@ function Impostazioni({ chiudi, session, profili, setProfili, reparti, mostraToa
 
   return (
     <Foglio titolo="Impostazioni" chiudi={chiudi}>
+      {io?.ruolo === 'admin' && (
+        <div className="sezione">
+          <button className="btn primario" onClick={() => apri({ tipo: 'admin' })}>
+            👥 Amministrazione{richiesteAttesa > 0 ? ` · ${richiesteAttesa} ${richiesteAttesa === 1 ? 'richiesta' : 'richieste'}` : ''}
+          </button>
+        </div>
+      )}
       <div className="sezione">
         <h3>Il tuo nome</h3>
         <div className="riga-form">
@@ -939,7 +1140,10 @@ function Impostazioni({ chiudi, session, profili, setProfili, reparti, mostraToa
         {!ok && !(push.isIOS && !push.isStandalone) && (
           <p className="grigio">Questo browser non supporta le notifiche push.</p>
         )}
-        {ok && notif.caricato && (
+        {ok && notif.caricato && !notif.configurate && (
+          <p className="grigio">Le notifiche non sono ancora state configurate da un amministratore.</p>
+        )}
+        {ok && notif.caricato && notif.configurate && (
           <>
             <p className="grigio piccolo">Ricevi un avviso quando un collega aggiunge un'attività nei reparti scelti.</p>
             <div className="spunte">
@@ -1075,7 +1279,8 @@ function SchedaGuardia({ p, letto, nomeRep, valutazioni, profili, az, apri }) {
   const [ora, setOra] = useState('')
   const ids = new Set(valutazioni.map((a) => a.id))
   const perOra = (a, b) => a.fatta - b.fatta || b.urgente - a.urgente ||
-    (a.ora || '99').localeCompare(b.ora || '99') || a.creata_il.localeCompare(b.creata_il)
+    (a.scadenza || '9').localeCompare(b.scadenza || '9') || (a.ora || '99').localeCompare(b.ora || '99') ||
+    a.creata_il.localeCompare(b.creata_il)
   const radici = valutazioni.filter((a) => !a.parent_id || !ids.has(a.parent_id)).sort(perOra)
   const figliDi = (id) => valutazioni.filter((a) => a.parent_id === id).sort(perOra)
 
@@ -1083,7 +1288,7 @@ function SchedaGuardia({ p, letto, nomeRep, valutazioni, profili, az, apri }) {
     e.preventDefault()
     const t = testo.trim()
     if (!t) return
-    az.aggiungiAttivita(p, t, false, null, { guardia: true, ora })
+    az.aggiungiAttivita(p, t, false, null, { guardia: true, scadenza: T.oraInScadenza(ora)?.toISOString() })
     setTesto('')
     setOra('')
   }
@@ -1094,7 +1299,7 @@ function SchedaGuardia({ p, letto, nomeRep, valutazioni, profili, az, apri }) {
         <span className="num">{letto?.nome ?? '?'}</span>
         <div className="nome-blocco">
           <span className="nome">{p.nome}</span>
-          <small className="grigio">{nomeRep}</small>
+          <small className="grigio">{nomeRep}{p.data_ricovero ? ` · G${T.giornoRicovero(p.data_ricovero)}` : ''}</small>
         </div>
         <button className="icona" aria-label="Modifica consegna">✎</button>
       </div>
@@ -1214,7 +1419,7 @@ function FormPacchetto({ chiudi, az, paziente, letto, pacchetti, attivita, inizi
 
   function conferma() {
     const voci = pac.voci
-      .map((v, i) => spunte[i] && { t: v.t, f: (v.f || []).filter((_, j) => spunte[`${i}.${j}`]) })
+      .map((v, i) => spunte[i] && { ...v, f: (v.f || []).filter((_, j) => spunte[`${i}.${j}`]) })
       .filter(Boolean)
     az.aggiungiPacchetto(paziente, voci)
     chiudi()
@@ -1231,7 +1436,7 @@ function FormPacchetto({ chiudi, az, paziente, letto, pacchetti, attivita, inizi
         <div className="elenco-pacchetti">
           {pacchetti.length === 0 && <p className="grigio">Nessun pacchetto. Creane uno da Impostazioni → Gestisci pacchetti.</p>}
           {pacchetti.map((p) => (
-            <button key={p.id} className="pacchetto" onClick={() => setSelId(p.id)}>
+            <button key={p.id ?? p.nome} className="pacchetto" onClick={() => setSelId(p.id)}>
               <span className="nome-pac">{p.nome}</span>
               <span className="grigio piccolo">
                 {p.voci.length} attività
@@ -1264,7 +1469,9 @@ function FormPacchetto({ chiudi, az, paziente, letto, pacchetti, attivita, inizi
             <li key={i}>
               <label className={`voce ${spunte[i] ? '' : 'spenta'}`}>
                 <input type="checkbox" checked={!!spunte[i]} onChange={(e) => setSpunte((s) => ({ ...s, [i]: e.target.checked }))} />
-                <span>{v.t}{gia && <small className="gia"> · già presente</small>}</span>
+                <span>{v.t}{T.testoRipeti(v) && <small className="tag-rip"> 🔁 {T.testoRipeti(v)}</small>}
+                  {v.entro_ore && <small className="tag-rip"> entro {v.entro_ore}h</small>}
+                  {gia && <small className="gia"> · già presente</small>}</span>
               </label>
               {v.f?.length > 0 && (
                 <ul>
@@ -1293,14 +1500,15 @@ function FormPacchetto({ chiudi, az, paziente, letto, pacchetti, attivita, inizi
 }
 
 // testo <-> voci:  una riga = attività; riga che inizia con "-" = sotto-attività della precedente
-const vociInTesto = (voci) => voci.map((v) => [v.t, ...(v.f || []).map((f) => `- ${f}`)].join('\n')).join('\n')
+// tempi facoltativi tra parentesi quadre: "NIHSS [ogni 6h]", "Glicemia [08:00 12:00 18:00]", "TC [entro 24h]"
+const vociInTesto = (voci) => voci.map((v) => [T.scriviTempi(v), ...(v.f || []).map((f) => `- ${f}`)].join('\n')).join('\n')
 function testoInVoci(txt) {
   const voci = []
   for (const riga of txt.split('\n')) {
     const r = riga.trim()
     if (!r) continue
     if (/^[-–•*]/.test(r) && voci.length) (voci[voci.length - 1].f ??= []).push(r.replace(/^[-–•*]\s*/, ''))
-    else voci.push({ t: r.replace(/^[-–•*]\s*/, '') })
+    else voci.push(T.leggiTempi(r.replace(/^[-–•*]\s*/, '')))
   }
   return voci
 }
@@ -1337,10 +1545,11 @@ function GestionePacchetti({ chiudi, pacchetti, caricaPacchetti, mostraToast }) 
           <label>Nome
             <input value={modifica.nome} onChange={(e) => setModifica({ ...modifica, nome: e.target.value })} placeholder="es. Ictus ischemico" required />
           </label>
-          <label>Attività — una per riga; con “-” davanti diventa sotto-attività della riga sopra
+          <label>Attività — una per riga; con “-” davanti diventa sotto-attività della riga sopra.
+            Orari facoltativi tra parentesi quadre: [ogni 6h], [08:00 12:00 18:00], [entro 24h]
             <textarea rows={14} className="mono" value={modifica.testo}
               onChange={(e) => setModifica({ ...modifica, testo: e.target.value })}
-              placeholder={'TC encefalo di controllo\nEsami ematici\n- Emocromo\n- PCR\nEcocolordoppler TSA'} />
+              placeholder={'TC encefalo di controllo [entro 24h]\nNIHSS [ogni 6h]\nEsami ematici\n- Emocromo\n- PCR\nGlicemia [08:00 12:00 18:00]'} />
           </label>
           <button className="btn primario">Salva pacchetto</button>
         </form>
@@ -1364,6 +1573,42 @@ function GestionePacchetti({ chiudi, pacchetti, caricaPacchetti, mostraToast }) 
       </div>
       <div className="sezione">
         <button className="btn primario" onClick={() => setModifica({ nome: '', testo: '' })}>+ Nuovo pacchetto</button>
+      </div>
+    </Foglio>
+  )
+}
+
+// ---------------------------------------------------------------- RICERCA
+function Cerca({ chiudi, reparti, vaiA }) {
+  const [q, setQ] = useState('')
+  const [ris, setRis] = useState([])
+  const [cercando, setCercando] = useState(false)
+  useEffect(() => {
+    const t = q.trim()
+    if (t.length < 2) { setRis([]); return }
+    setCercando(true)
+    const timer = setTimeout(async () => {
+      const { data } = await supabase.from('pazienti').select('id, nome, reparto_id, letto_id, data_ricovero, letti(nome)')
+        .eq('dimesso', false).ilike('nome', `%${t.replace(/[%_]/g, '')}%`).order('nome').limit(20)
+      setRis(data || [])
+      setCercando(false)
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [q])
+  const nomeRep = (id) => reparti.find((r) => r.id === id)?.nome ?? ''
+  return (
+    <Foglio titolo="🔍 Cerca paziente" chiudi={chiudi}>
+      <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cognome o nome…" enterKeyHint="search" />
+      <div className="elenco-admin">
+        {q.trim().length >= 2 && !cercando && ris.length === 0 && <p className="grigio">Nessun paziente ricoverato con questo nome.</p>}
+        {ris.map((p) => (
+          <button key={p.id} className="riga-admin cliccabile" onClick={() => { vaiA(p); chiudi() }}>
+            <span className="num">{p.letti?.nome ?? '?'}</span>
+            <div className="cresce"><b>{p.nome}</b><br /><span className="grigio piccolo">{nomeRep(p.reparto_id)}
+              {p.data_ricovero ? ` · G${T.giornoRicovero(p.data_ricovero)}` : ''}</span></div>
+            <span className="freccia">›</span>
+          </button>
+        ))}
       </div>
     </Foglio>
   )

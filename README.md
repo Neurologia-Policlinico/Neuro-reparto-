@@ -29,50 +29,56 @@ Se hai già eseguito lo schema in passato, riesegui semplicemente tutto [`supaba
 - Disattiva **"Allow new users to sign up"**.
 - **Authentication → URL Configuration → Site URL**: lo inserirai al passo 6, quando avrai l'indirizzo dell'app.
 
-## 3. Crea gli account dei medici
-**Pochi medici:** da **Authentication → Users → Add user → Create new user**. Inserisci email e password e spunta **Auto Confirm User**. Ogni medico imposta poi il proprio nome dalle Impostazioni (⚙︎).
-
-**Tutti insieme (consigliato per 60 medici):**
-1. Compila un file CSV come [`scripts/medici-esempio.csv`](scripts/medici-esempio.csv) (`email,nome,password`).
-2. Prendi la chiave segreta da **Project Settings → API Keys**: si chiama **service_role** oppure **secret key** (`sb_secret_…`). Dà accesso completo al database: non condividerla e non metterla nell'app.
-3. Dal tuo computer, nella cartella del progetto:
-   ```bash
-   npm install
-   ```
-   ```bash
-   SUPABASE_URL=https://TUO-PROGETTO.supabase.co SUPABASE_SERVICE_ROLE_KEY=chiave-service-role node scripts/crea-utenti.mjs medici.csv
-   ```
-4. Comunica a ciascuno la password provvisoria e chiedigli di cambiarla da ⚙︎ → **Cambia password**.
-
-## 4. Genera le chiavi per le notifiche (VAPID)
-```bash
-npx web-push generate-vapid-keys
+## 3. Diventa amministratore
+Dopo aver creato il tuo utente (*Authentication → Users → Add user → Create new user*, con **Auto Confirm User**),
+in *SQL Editor* esegui, con la tua email:
+```sql
+update public.profili set ruolo = 'admin' where email = 'la-tua-email@esempio.it';
 ```
-Si ottengono una **Public Key** e una **Private Key**. La pubblica va nell'app (passo 6), la privata solo su Supabase (passo 5).
+Da quel momento nell'app compare **⚙︎ Impostazioni → 👥 Amministrazione**.
 
-## 5. Attiva l'invio delle notifiche (Edge Function)
-Dalla cartella del progetto:
-```bash
-npx supabase login
-```
-```bash
-npx supabase link --project-ref TUO-PROJECT-REF
-```
-(il *project ref* è il codice nell'indirizzo del progetto: `https://supabase.com/dashboard/project/<ref>`)
+## 4. Pubblica le due funzioni server (Edge Functions) — anche dal browser
+Su Supabase: **Edge Functions → Deploy a new function → Via Editor** (o "Open Editor").
+Ripeti per ciascuna funzione:
 
-```bash
-npx supabase secrets set VAPID_PUBLIC_KEY=chiave-pubblica VAPID_PRIVATE_KEY=chiave-privata VAPID_SUBJECT=mailto:tua-email@ospedale.it WEBHOOK_SECRET=una-parola-segreta-lunga
-```
-```bash
-npx supabase functions deploy notifica --no-verify-jwt
-```
+| Nome funzione | Codice da incollare |
+|---|---|
+| `admin` | [`supabase/functions/admin/index.ts`](supabase/functions/admin/index.ts) |
+| `notifica` | [`supabase/functions/notifica/index.ts`](supabase/functions/notifica/index.ts) |
 
-Poi collega la funzione al database:
-1. **Database → Webhooks** (nelle versioni più recenti: **Integrations → Database Webhooks**) → **Create a new hook**; se richiesto, prima **Enable webhooks**.
-2. Nome: `notifica`. Tabella: **attivita**. Eventi: solo **Insert**.
-3. Tipo: **Supabase Edge Functions**, funzione **notifica**, metodo POST.
-4. In **HTTP Headers** aggiungi `x-webhook-secret` = la stessa parola segreta usata sopra.
-5. **Create webhook**.
+Apri il file su GitHub, premi l'icona **Copy raw file**, incolla nell'editor al posto del testo di esempio,
+scrivi il nome esatto e premi **Deploy**. Lascia attivo **Verify JWT**.
+
+## 5. Collega le notifiche al database (Database Webhooks)
+Su Supabase: **Database → Webhooks** (nelle versioni recenti **Integrations → Database Webhooks**) → **Create a new hook**.
+Creane due:
+
+| Nome | Tabella | Eventi | Funzione |
+|---|---|---|---|
+| `notifica_attivita` | `attivita` | **Insert** e **Update** | `notifica` |
+| `notifica_richieste` | `richieste_accesso` | **Insert** | `notifica` |
+
+Per entrambi: *Type of webhook* → **Supabase Edge Functions**, metodo **POST**, funzione **notifica**,
+poi in *HTTP Headers* premi **Add auth header with service key**. Salva.
+
+Infine nell'app: **⚙︎ → Amministrazione → Notifiche → Genera chiavi** (una volta sola).
+Ogni medico poi attiva le notifiche da **⚙︎ Impostazioni → Attiva notifiche**
+(su iPhone/iPad solo aprendo l'app dall'icona sulla schermata Home).
+
+Chi riceve cosa:
+- **nuova attività** → chi segue quel reparto (tranne chi l'ha scritta);
+- **attività assegnata** → solo la persona a cui è stata assegnata;
+- **nuova richiesta di accesso** → gli amministratori.
+
+## Gestione degli accessi (dall'app)
+- Il collega preme **"Richiedi accesso"** nella pagina di login e inserisce nome, email e ruolo.
+- Un amministratore apre **⚙︎ → Amministrazione → Richieste** → **Approva**: sceglie ruolo e, se serve,
+  la **data di scadenza** (es. fine rotazione dello specializzando: a quella data l'account si blocca da solo).
+- L'app prepara il messaggio con indirizzo, email e **password provvisoria** da inviare con **Condividi** (WhatsApp, email…).
+  Non serve configurare l'invio di email.
+- In **Utenti** si può cambiare ruolo e scadenza, **bloccare** un account (effetto immediato), impostare una nuova
+  password provvisoria o eliminare l'account. Nominate almeno **due amministratori**.
+- In alternativa, per caricare molti account insieme dal computer: [`scripts/crea-utenti.mjs`](scripts/crea-utenti.mjs).
 
 ## 6. Pubblica l'app (GitHub Pages)
 L'app viene costruita e pubblicata da GitHub stesso (file `.github/workflows/pubblica.yml`).
@@ -125,7 +131,7 @@ Apri http://localhost:5173.
 |---|---|
 | Cambiare reparto | Schede in alto |
 | Ricoverare un paziente | Letto libero → **+ Paziente** |
-| Modificare nome o appunti, trasferire, dimettere | Tocca il nome del paziente (✎) |
+| Modificare nome, appunti, data di ricovero, trasferire, dimettere | Tocca il nome del paziente |
 | Nuova attività | Campo "Nuova attività…" in fondo alla scheda; **!** per segnarla urgente |
 | Sotto-attività | **↳+** accanto all'attività (puoi scriverne più di una, una per riga) |
 | Segnare come fatta | Tocca la casella; compare **Annulla** per qualche secondo |
@@ -133,6 +139,11 @@ Apri http://localhost:5173.
 | Scrivere la consegna per la guardia | 🌙 sulla scheda del paziente |
 | Valutazione da fare in guardia | 🌙 accanto a "Nuova attività…", oppure dalla scheda **🌙 Guardia** (con orario) |
 | Stampare le consegne | Scheda **🌙 Guardia** → **🖨 Stampa** |
+| Orario, ripetizione ("ogni 6h", "08 · 12 · 18"), assegnazione | Tocca il testo dell'attività |
+| Vedere solo le attività assegnate a te | Pulsante **Mie** |
+| Cercare un paziente in tutti i reparti | 🔍 in alto |
+| Giornata di ricovero | **G5** accanto al nome (data modificabile nella scheda del paziente) |
+| Orari nei pacchetti | in fondo alla riga: `[ogni 6h]`, `[08:00 12:00 18:00]`, `[entro 24h]` |
 | Vedere le attività fatte | Pulsante **Fatte** |
 | Vedere solo i letti con qualcosa da fare | Pulsante **Con attività** |
 | Aggiungere un letto | **+ Aggiungi letto** in fondo alla lista |
