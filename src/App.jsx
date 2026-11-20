@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { supabase, configurato } from './supabase'
+import { supabase, configurato, infoConfigurazione } from './supabase'
 import * as push from './push'
 
 // ---------------------------------------------------------------- utilità
@@ -135,6 +135,11 @@ function Login() {
         {msg && <p className="avviso">{msg}</p>}
         <button className="btn primario" disabled={occupato}>{occupato ? 'Accesso…' : 'Entra'}</button>
         <button type="button" className="btn link" onClick={recupera}>Password dimenticata?</button>
+        <details className="dettagli-tecnici">
+          <summary>Dettagli tecnici</summary>
+          <p>Progetto Supabase: <code>{infoConfigurazione().progetto}</code></p>
+          <p>Tipo di chiave: <code>{infoConfigurazione().tipo}</code></p>
+        </details>
       </form>
     </div>
   )
