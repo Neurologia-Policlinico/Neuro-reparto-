@@ -11,7 +11,7 @@ App per telefono (web app installabile) con le attività dei pazienti dei repart
 - **Notifiche push**: ogni medico sceglie i reparti da seguire e riceve un avviso quando un collega aggiunge un'attività. Chi la crea non riceve la propria notifica.
 - Accesso solo con account personale, creato da te: non ci si può registrare da soli.
 
-Servizi usati, tutti con piano gratuito: **Supabase** (database, login, tempo reale, notifiche), **GitHub** (codice privato e pubblicazione automatica) e **Netlify** (indirizzo web dell'app).
+Servizi usati, tutti con piano gratuito: **Supabase** (database, login, tempo reale, notifiche), e **GitHub** (codice e pubblicazione automatica con GitHub Pages).
 
 ---
 
@@ -74,33 +74,32 @@ Poi collega la funzione al database:
 4. In **HTTP Headers** aggiungi `x-webhook-secret` = la stessa parola segreta usata sopra.
 5. **Create webhook**.
 
-## 6. Pubblica l'app (GitHub → Netlify)
-Il codice è privato in un'organizzazione GitHub: i piani gratuiti di Vercel e Netlify non lo collegano direttamente.
-Per questo l'app viene **costruita da GitHub** (file `.github/workflows/pubblica.yml`) e poi **inviata a Netlify**.
-Ogni modifica caricata sul ramo `main` si pubblica da sola in 1–2 minuti.
+## 6. Pubblica l'app (GitHub Pages)
+L'app viene costruita e pubblicata da GitHub stesso (file `.github/workflows/pubblica.yml`).
+Ogni modifica caricata sul ramo `main` va online da sola in 1–2 minuti. Non servono altri servizi.
 
-1. **Netlify** – crea un progetto (anche vuoto) e copia il suo **Project ID / App ID** (Manage → in alto, icona copia).
-   Se il progetto è collegato al repository GitHub, scollegalo o ferma le build automatiche di Netlify
-   (cerca "builds" in *Find a setting* → *Stop builds* / *Unlink repository*), altrimenti a ogni modifica compare un errore inutile.
-2. **Netlify** – crea un codice di accesso: foto profilo → **User settings** → **Applications** → **Personal access tokens** → **New access token**.
-   Scegli la scadenza più lunga e **segnati la data**: alla scadenza va rifatto (vedi sotto).
-3. **GitHub** – nel repository: **Settings → Secrets and variables → Actions → New repository secret**, e crea:
+> Il repository deve essere **pubblico** (GitHub Pages è gratuito solo per i repository pubblici).
+> Il codice non contiene dati né password: i dati stanno su Supabase e le chiavi nei *Secrets* di GitHub.
+
+1. **Rendi pubblico il repository** (una volta sola): *Settings → General* → in fondo, *Danger Zone* → **Change visibility** → **Public**.
+2. **Attiva GitHub Pages** (una volta sola): *Settings → Pages* → *Build and deployment* → **Source: GitHub Actions**.
+3. **Inserisci le chiavi**: *Settings → Secrets and variables → Actions* → **New repository secret**:
    | Nome | Valore |
    |---|---|
-   | `NETLIFY_AUTH_TOKEN` | il codice di accesso del punto 2 |
-   | `NETLIFY_SITE_ID` | il Project ID del punto 1 |
    | `VITE_SUPABASE_URL` | Project URL di Supabase |
-   | `VITE_SUPABASE_ANON_KEY` | chiave anon / publishable di Supabase (mai la secret) |
+   | `VITE_SUPABASE_ANON_KEY` | chiave anon / publishable di Supabase (**mai** la secret) |
    | `VITE_VAPID_PUBLIC_KEY` | (facoltativa) chiave pubblica VAPID per le notifiche |
-4. **GitHub** – scheda **Actions** → **Pubblica su Netlify** → **Run workflow**. Dopo 1–2 minuti l'app è online
-   (es. `https://neuro-reparto.netlify.app`). In Netlify imposta la visibilità su **Public**.
-5. **Supabase** → Authentication → URL Configuration: inserisci l'indirizzo dell'app come **Site URL**.
+4. **Pubblica**: scheda **Actions** → **Pubblica l'app** → **Run workflow**. Dopo 1–2 minuti l'app è online su
+   `https://<organizzazione>.github.io/<nome-repository>/` (l'indirizzo esatto compare in *Settings → Pages*).
+5. **Supabase** → *Authentication → URL Configuration*: inserisci quell'indirizzo come **Site URL**
+   e aggiungilo anche in **Redirect URLs**.
+6. (Consigliato) *Settings → General → Features*: togli la spunta a **Issues**, così nessun estraneo può scrivervi.
 
-**Se la pubblicazione smette di funzionare** (pallino rosso in *Actions*): quasi sempre è scaduto il codice di accesso Netlify.
-Creane uno nuovo (punto 2) e sostituisci il secret `NETLIFY_AUTH_TOKEN` (punto 3), poi **Run workflow**.
+**Se la pubblicazione non va** (pallino rosso in *Actions*): apri l'esecuzione fallita; il primo passo
+"Controllo chiavi" dice se manca qualche chiave.
 
-**Spostare l'app altrove** (altro account Netlify, server dell'ospedale…): basta cambiare i due secret Netlify,
-oppure costruire l'app con `npm run build` e copiare la cartella `dist` su qualsiasi server web.
+**Spostare l'app altrove** (Netlify, server dell'ospedale…): l'app funziona anche alla radice di un sito.
+`npm run build` crea la cartella `dist` da copiare su qualsiasi server web (per Netlify c'è già `netlify.toml`).
 
 ## 7. Installare l'app sul telefono
 - **iPhone (Safari)**: apri l'indirizzo, tocca **Condividi → Aggiungi alla schermata Home**. Apri l'app **dall'icona**, poi ⚙︎ → **Attiva notifiche**. Su iPhone le notifiche funzionano solo dall'icona sulla Home, con iOS 16.4 o successivo.

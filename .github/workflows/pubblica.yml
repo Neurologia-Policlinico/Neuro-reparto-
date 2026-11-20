@@ -1,34 +1,38 @@
-# Costruisce l'app e la pubblica su Netlify a ogni modifica del ramo "main".
-# Le chiavi si inseriscono in: GitHub -> Settings -> Secrets and variables -> Actions
-#   NETLIFY_AUTH_TOKEN     codice di accesso creato su Netlify
-#   NETLIFY_SITE_ID        "App ID" / "Project ID" del progetto Netlify
+# Costruisce l'app e la pubblica su GitHub Pages a ogni modifica del ramo "main".
+# Indirizzo: https://<organizzazione>.github.io/<nome-repository>/
+#
+# Chiavi da inserire in: Settings -> Secrets and variables -> Actions -> New repository secret
 #   VITE_SUPABASE_URL      Project URL di Supabase
-#   VITE_SUPABASE_ANON_KEY chiave anon / publishable di Supabase (non quella secret)
+#   VITE_SUPABASE_ANON_KEY chiave anon / publishable di Supabase (MAI quella secret)
 #   VITE_VAPID_PUBLIC_KEY  (facoltativa) chiave pubblica per le notifiche
-name: Pubblica su Netlify
+# Una volta sola: Settings -> Pages -> Source: "GitHub Actions"
+name: Pubblica l'app
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 concurrency:
-  group: pubblica-netlify
-  cancel-in-progress: true
+  group: pages
+  cancel-in-progress: false
 
 jobs:
-  pubblica:
+  costruisci:
     runs-on: ubuntu-latest
     steps:
       - name: Controllo chiavi
         env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: |
           mancanti=""
-          for k in NETLIFY_AUTH_TOKEN NETLIFY_SITE_ID VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY; do
+          for k in VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY; do
             [ -n "${!k}" ] || mancanti="$mancanti $k"
           done
           if [ -n "$mancanti" ]; then
@@ -48,13 +52,24 @@ jobs:
 
       - name: Costruisci l'app
         env:
+          BASE_PATH: /${{ github.event.repository.name }}/
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
           VITE_VAPID_PUBLIC_KEY: ${{ secrets.VITE_VAPID_PUBLIC_KEY }}
         run: npm run build
 
-      - name: Pubblica su Netlify
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-        run: npx --yes netlify-cli@27.20.1 deploy --prod --dir=dist --no-build --message "GitHub ${GITHUB_SHA::7}"
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  pubblica:
+    needs: costruisci
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

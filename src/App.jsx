@@ -97,7 +97,7 @@ function Login() {
   async function recupera() {
     if (!email.trim()) return setMsg('Scrivi prima la tua email.')
     const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo: location.origin,
+      redirectTo: new URL(import.meta.env.BASE_URL, location.origin).href,
     })
     setMsg(error ? error.message : 'Ti abbiamo inviato un\'email per reimpostare la password.')
   }
@@ -105,7 +105,7 @@ function Login() {
   return (
     <div className="centro">
       <form className="box" onSubmit={entra}>
-        <img src="/icon-192.png" alt="" className="logo" />
+        <img src={`${import.meta.env.BASE_URL}icon-192.png`} alt="" className="logo" />
         <h1>Neuro Reparto</h1>
         <label>Email
           <input type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} required />

@@ -45,7 +45,7 @@ Deno.serve(async (req) => {
   const payload = JSON.stringify({
     title: `${a.urgente ? "🔴 " : ""}${a.guardia ? "🌙 Guardia · " : ""}${rep?.nome ?? "Reparto"} · Letto ${letto}`,
     body: `${paz?.nome ?? ""}: ${a.ora ? `ore ${a.ora} – ` : ""}${testoPadre}${a.testo}${autore?.nome ? ` (${autore.nome})` : ""}`,
-    url: a.guardia ? "/?reparto=guardia" : `/?reparto=${a.reparto_id}`,
+    url: a.guardia ? "?reparto=guardia" : `?reparto=${a.reparto_id}`, // relativo alla cartella dell'app
     tag: `attivita-${a.id}`,
   });
 
