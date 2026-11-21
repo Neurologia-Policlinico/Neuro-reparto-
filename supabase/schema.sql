@@ -131,6 +131,27 @@ alter table public.attivita add column if not exists assegnata_a uuid references
 create index if not exists attivita_assegnata_idx on public.attivita(assegnata_a) where not fatta;
 alter table public.pazienti add column if not exists data_ricovero date not null default current_date;
 
+-- stato di avanzamento (richiesto, prenotato, eseguito, refertato, visionato) con chi/quando
+alter table public.attivita add column if not exists stato text;
+alter table public.attivita add column if not exists stato_il timestamptz;
+alter table public.attivita add column if not exists stato_da uuid references auth.users(id) on delete set null;
+do $$ begin
+  alter table public.attivita add constraint attivita_stato_ck
+    check (stato is null or stato in ('richiesto', 'prenotato', 'eseguito', 'refertato', 'visionato'));
+exception when duplicate_object then null; end $$;
+create or replace function public.tocca_stato()
+returns trigger language plpgsql as $$
+begin
+  if new.stato is distinct from old.stato then
+    new.stato_il := case when new.stato is null then null else now() end;
+    new.stato_da := case when new.stato is null then null else auth.uid() end;
+  end if;
+  return new;
+end $$;
+drop trigger if exists attivita_stato on public.attivita;
+create trigger attivita_stato before update on public.attivita
+  for each row execute function public.tocca_stato();
+
 -- profili esistenti: email e profilo mancante
 insert into public.profili (id, nome, email)
 select u.id, coalesce(u.raw_user_meta_data->>'nome', split_part(u.email, '@', 1)), u.email

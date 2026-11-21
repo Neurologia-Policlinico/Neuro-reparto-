@@ -441,3 +441,37 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .letto.libero .intest { padding-top: 4px; padding-bottom: 4px; }
 
 .info.errore-box { background: var(--danger-soft); color: var(--danger); }
+
+/* ---------- STATO DELL'ATTIVITÀ */
+:root { --teal: #00796b; --teal-soft: #e0f2f1; --viola: #6a3fb5; --viola-soft: #efe8fb; }
+@media (prefers-color-scheme: dark) { :root { --teal: #4db6ac; --teal-soft: #133532; --viola: #b39ddb; --viola-soft: #2a2140; } }
+.teal { color: var(--teal); } .teal b { color: var(--teal) !important; }
+.pill-stato {
+  display: inline-block; border: 1px solid transparent; border-radius: 999px; padding: 0 7px; margin-right: 6px;
+  font-size: 11px; font-weight: 700; line-height: 18px; vertical-align: 1px; cursor: pointer;
+}
+.s-richiesto { color: var(--primary); background: var(--primary-soft); }
+.s-prenotato { color: var(--viola); background: var(--viola-soft); }
+.s-eseguito { color: var(--warn); background: var(--warn-soft); }
+.s-refertato { color: #fff; background: var(--teal); }
+.s-visionato { color: var(--ok); background: transparent; border-color: var(--ok); }
+.fatta .pill-stato { opacity: .7; }
+.scelta-stato { margin-bottom: 14px; }
+.stati { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.stato-btn {
+  display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--card); color: var(--text); font-size: 12px; font-weight: 600; min-height: 56px;
+}
+.stato-btn span { font-size: 18px; }
+.stato-btn.attivo { border-width: 2px; }
+.stato-btn.attivo.s-richiesto, .stato-btn.s-richiesto.attivo { border-color: var(--primary); }
+.stato-btn:not(.attivo) { background: var(--card); color: var(--text); }
+.stato-btn.attivo.s-refertato { color: #fff; }
+.mini-link { padding: 0; min-height: 0; font-size: 12px; display: inline; }
+@media (max-width: 360px) { .stati { grid-template-columns: repeat(3, 1fr); } }
+/* pulsante dello stato attivo: colori dello stato */
+.stato-btn.attivo.s-richiesto { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+.stato-btn.attivo.s-prenotato { background: var(--viola-soft); color: var(--viola); border-color: var(--viola); }
+.stato-btn.attivo.s-eseguito { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+.stato-btn.attivo.s-refertato { background: var(--teal); color: #fff; border-color: var(--teal); }
+.stato-btn.attivo.s-visionato { background: var(--card); color: var(--ok); border-color: var(--ok); }

@@ -18,6 +18,15 @@ export const RIANIMAZIONE = [
   { v: 'limitata', nome: 'Cure limitate', breve: 'Cure limitate' },
   { v: 'no', nome: 'Non rianimabile (DNR)', breve: 'DNR' },
 ]
+// stati di avanzamento di un'attività (es. esami, consulenze); "visionato" la chiude come fatta
+export const STATI = [
+  { v: 'richiesto', nome: 'Richiesto', icona: '📝' },
+  { v: 'prenotato', nome: 'Prenotato', icona: '📅' },
+  { v: 'eseguito', nome: 'Eseguito', icona: '🩺' },
+  { v: 'refertato', nome: 'Refertato', icona: '📄' },
+  { v: 'visionato', nome: 'Visionato', icona: '👁' },
+]
+const statoDi = (v) => STATI.find((x) => x.v === v)
 const haConsegna = (p) => Boolean(p.consegna?.trim() || p.gravita > 0 || p.rianimazione || p.allergie?.trim())
 const store = {
   get(k) { try { return localStorage.getItem(k) } catch { return null } },
@@ -530,6 +539,15 @@ function Principale({ session }) {
       setLetti((xs) => xs.filter((x) => x.id !== l.id))
       return esegui(supabase.from('letti').delete().eq('id', l.id))
     },
+    impostaStato(a, v) {
+      const ora = new Date().toISOString()
+      const patch = { stato: v, stato_il: ora, stato_da: uid }
+      if (v === 'visionato' && !a.fatta) Object.assign(patch, { fatta: true, fatta_da: uid, fatta_il: ora })
+      if (v && v !== 'visionato' && a.fatta) Object.assign(patch, { fatta: false, fatta_da: null, fatta_il: null })
+      setAttivita((xs) => upsert(xs, { ...a, ...patch }))
+      esegui(supabase.from('attivita').update(patch).eq('id', a.id))
+      if (v === 'visionato') mostraToast(`👁 ${a.testo}: visionato`, () => az.impostaStato({ ...a, ...patch }, a.stato || null))
+    },
     io: uid,
     aperta: (id) => sottoAperte.has(id),
     alterna(id, val) {
@@ -571,6 +589,7 @@ function Principale({ session }) {
   const urgenti = visibili.filter((a) => !a.fatta && a.urgente).length
   const adesso = new Date()
   const scadute = visibili.filter((a) => T.etichettaScadenza(a, adesso)?.stato === 'scaduta').length
+  const daVisionare = visibili.filter((a) => !a.fatta && a.stato === 'refertato').length
   const occupati = lettiRep.filter((l) => pazPerLetto[l.id]).length
   const repCorrente = reparti.find((r) => r.id === repId)
 
@@ -621,6 +640,7 @@ function Principale({ session }) {
           <span><b>{aperte}</b> da fare</span>
           {urgenti > 0 && <span className="rosso"><b>{urgenti}</b> {urgenti === 1 ? 'urgente' : 'urgenti'}</span>}
           {scadute > 0 && <span className="rosso"><b>{scadute}</b> {scadute === 1 ? 'scaduta' : 'scadute'}</span>}
+          {daVisionare > 0 && <span className="teal"><b>{daVisionare}</b> da visionare</span>}
           <span>{occupati}/{lettiRep.length} letti</span>
           <span className="spazio" />
           <button className={`mini ${soloMie ? 'attivo' : ''}`} onClick={() => setSoloMie((v) => !v)}>Mie</button>
@@ -803,6 +823,11 @@ function Attivita({ a, figli, tutte, profili, az, apri, paziente, sotto, nascond
             {a.guardia && !nascondiLuna && <span className="tag-g" title="Valutazione per la guardia">🌙</span>}
             {sc && <span className={`tag-ora ${sc.stato}`}>{sc.stato === 'scaduta' ? '⚠ ' : ''}{sc.testo}</span>}
             {rip && <span className="tag-rip" title="Si ripete">🔁 {rip}</span>}
+            {statoDi(a.stato) && (
+              <button className={`pill-stato s-${a.stato}`} onClick={(e) => { e.stopPropagation(); apri({ tipo: 'stato', a, paziente }) }}>
+                {statoDi(a.stato).icona} {statoDi(a.stato).nome}
+              </button>
+            )}
             {padre ? <span className="grigio">{padre.testo} › </span> : null}{a.testo}
           </span>
           <small>
@@ -848,6 +873,7 @@ function Modale(props) {
     case 'pacchetto': return <FormPacchetto {...props} paziente={m.paziente} letto={m.letto} iniziale={m.pacchettoId} />
     case 'gestionePacchetti': return <GestionePacchetti {...props} />
     case 'cerca': return <Cerca {...props} />
+    case 'stato': return <FormStato {...props} a={m.a} paziente={m.paziente} />
     case 'admin': return <Amministrazione {...props} iniziale={m.iniziale} aggiornaConteggio={props.setRichiesteAttesa} />
     default: chiudi(); return null
   }
@@ -1004,6 +1030,7 @@ function FormAttivita({ chiudi, az, a, paziente, profili, medici = [] }) {
   }
   return (
     <Foglio titolo={paziente.nome} chiudi={chiudi}>
+      <SceltaStato a={a} az={az} profili={profili} dopo={chiudi} />
       <form onSubmit={salva} className="form">
         <label>Attività
           <textarea rows={3} value={testo} onChange={(e) => setTesto(e.target.value)} />
@@ -1650,6 +1677,36 @@ function Cerca({ chiudi, reparti, vaiA }) {
           </button>
         ))}
       </div>
+    </Foglio>
+  )
+}
+
+// ---------------------------------------------------------------- STATO DELL'ATTIVITÀ
+function SceltaStato({ a, az, profili, dopo }) {
+  return (
+    <div className="scelta-stato">
+      <div className="etichetta">Stato</div>
+      <div className="stati">
+        {STATI.map((x) => (
+          <button key={x.v} type="button" className={`stato-btn s-${x.v} ${a.stato === x.v ? 'attivo' : ''}`}
+            onClick={() => { az.impostaStato(a, a.stato === x.v ? null : x.v); dopo() }}>
+            <span>{x.icona}</span>{x.nome}
+          </button>
+        ))}
+      </div>
+      {a.stato && a.stato_il && (
+        <p className="grigio piccolo">{statoDi(a.stato)?.nome} da {profili[a.stato_da] ?? '—'} · {quando(a.stato_il)}
+          {' · '}<button type="button" className="btn link mini-link" onClick={() => { az.impostaStato(a, null); dopo() }}>togli stato</button></p>
+      )}
+    </div>
+  )
+}
+
+function FormStato({ chiudi, az, a, paziente, profili }) {
+  return (
+    <Foglio titolo={a.testo} chiudi={chiudi}>
+      <p className="grigio piccolo">{paziente.nome}</p>
+      <SceltaStato a={a} az={az} profili={profili} dopo={chiudi} />
     </Foglio>
   )
 }
