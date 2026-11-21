@@ -3,6 +3,7 @@ import { supabase, configurato, infoConfigurazione } from './supabase'
 import * as push from './push'
 import Foglio from './Foglio'
 import Amministrazione from './Amministrazione'
+import { INDAGINI } from './indagini'
 import * as T from './tempi'
 
 // ---------------------------------------------------------------- utilità
@@ -727,6 +728,7 @@ function Principale({ session }) {
 // ---------------------------------------------------------------- scheda letto
 function Letto({ letto, paziente, attivita, profili, az, apri, evidenziato }) {
   const [testo, setTesto] = useState('')
+  const [menuIndagini, setMenuIndagini] = useState(false)
   const [urgente, setUrgente] = useState(false)
   const [perGuardia, setPerGuardia] = useState(false)
   const rif = useRef()
@@ -761,6 +763,7 @@ function Letto({ letto, paziente, attivita, profili, az, apri, evidenziato }) {
     setTesto('')
     setUrgente(false)
     setPerGuardia(false)
+    setMenuIndagini(false)
   }
 
   return (
@@ -786,10 +789,15 @@ function Letto({ letto, paziente, attivita, profili, az, apri, evidenziato }) {
           <Attivita key={a.id} a={a} figli={figliDi(a.id)} tutte={attivita} profili={profili} az={az} apri={apri} paziente={paziente} />
         ))}
       </ul>
+      {menuIndagini && !perGuardia && (
+        <MenuIndagini filtro={testo} scegli={(v) => { setTesto(v); setMenuIndagini(false) }} />
+      )}
       <form className="aggiungi" onSubmit={aggiungi}>
         <input
           value={testo}
-          onChange={(e) => setTesto(e.target.value)}
+          onChange={(e) => { setTesto(e.target.value); setMenuIndagini(true) }}
+          onFocus={() => setMenuIndagini(true)}
+          onBlur={() => setMenuIndagini(false)}
           placeholder={perGuardia ? 'Valutazione per la guardia…' : 'Nuova attività…'}
           enterKeyHint="done"
         />
@@ -798,6 +806,28 @@ function Letto({ letto, paziente, attivita, profili, az, apri, evidenziato }) {
         <button className="piu" aria-label="Aggiungi" disabled={!testo.trim()}>+</button>
       </form>
     </section>
+  )
+}
+
+// menu a discesa con le indagini possibili: si apre toccando "Nuova attività" e si restringe mentre si scrive
+function MenuIndagini({ filtro, scegli }) {
+  const q = filtro.trim().toLowerCase()
+  const gruppi = INDAGINI
+    .map((g) => ({ ...g, voci: g.voci.filter((v) => !q || v.toLowerCase().includes(q) || g.gruppo.toLowerCase().includes(q)) }))
+    .filter((g) => g.voci.length > 0)
+  if (gruppi.length === 0) return null
+  return (
+    // onPointerDown/preventDefault: il campo di testo non perde il focus quando si tocca una voce
+    <div className="menu-indagini" onPointerDown={(e) => e.preventDefault()} role="listbox" aria-label="Indagini possibili">
+      {gruppi.map((g) => (
+        <div key={g.gruppo}>
+          <div className="gruppo-ind">{g.gruppo}</div>
+          {g.voci.map((v) => (
+            <button key={v} type="button" role="option" className="voce-ind" onClick={() => scegli(v)}>{v}</button>
+          ))}
+        </div>
+      ))}
+    </div>
   )
 }
 
