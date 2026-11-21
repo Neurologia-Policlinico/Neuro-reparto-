@@ -475,3 +475,6 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .stato-btn.attivo.s-eseguito { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
 .stato-btn.attivo.s-refertato { background: var(--teal); color: #fff; border-color: var(--teal); }
 .stato-btn.attivo.s-visionato { background: var(--card); color: var(--ok); border-color: var(--ok); }
+
+.mini.visionare { color: var(--teal); border-color: var(--teal); font-weight: 700; }
+.mini.visionare.attivo { background: var(--teal); color: #fff; }

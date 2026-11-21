@@ -257,6 +257,7 @@ function Principale({ session }) {
   const [io, setIo] = useState(null)                // il mio profilo
   const [richiesteAttesa, setRichiesteAttesa] = useState(0)
   const [soloMie, setSoloMie] = useState(false)
+  const [soloVisionare, setSoloVisionare] = useState(false)
   const [evidenzia, setEvidenzia] = useState(null)  // paziente trovato con la ricerca
   // attività con le sotto-attività aperte (ricordate su questo dispositivo)
   const [sottoAperte, setSottoAperte] = useState(() => {
@@ -566,11 +567,12 @@ function Principale({ session }) {
     [pazienti, repId],
   )
   const visibili = useMemo(() => {
-    const xs = attivita.filter((a) => a.reparto_id === repId && ricoverati.has(a.paziente_id) && (mostraFatte || !a.fatta))
+    let xs = attivita.filter((a) => a.reparto_id === repId && ricoverati.has(a.paziente_id) && (mostraFatte || !a.fatta))
+    if (soloVisionare) xs = xs.filter((a) => !a.fatta && a.stato === 'refertato')
     if (!soloMie) return xs
     const mie = new Set(xs.filter((a) => a.assegnata_a === uid).map((a) => a.id))
     return xs.filter((a) => mie.has(a.id) || mie.has(a.parent_id))
-  }, [attivita, repId, mostraFatte, soloMie, uid, ricoverati])
+  }, [attivita, repId, mostraFatte, soloMie, soloVisionare, uid, ricoverati])
   const attPerPaz = useMemo(() => {
     const m = {}
     for (const a of visibili) (m[a.paziente_id] ??= []).push(a)
@@ -589,11 +591,11 @@ function Principale({ session }) {
   const urgenti = visibili.filter((a) => !a.fatta && a.urgente).length
   const adesso = new Date()
   const scadute = visibili.filter((a) => T.etichettaScadenza(a, adesso)?.stato === 'scaduta').length
-  const daVisionare = visibili.filter((a) => !a.fatta && a.stato === 'refertato').length
+  const daVisionare = attivita.filter((a) => a.reparto_id === repId && ricoverati.has(a.paziente_id) && !a.fatta && a.stato === 'refertato').length
   const occupati = lettiRep.filter((l) => pazPerLetto[l.id]).length
   const repCorrente = reparti.find((r) => r.id === repId)
 
-  const lettiMostrati = soloConAttivita || soloMie
+  const lettiMostrati = soloConAttivita || soloMie || soloVisionare
     ? lettiRep.filter((l) => {
         const p = pazPerLetto[l.id]
         return p && (attPerPaz[p.id] || []).some((a) => !a.fatta)
@@ -640,7 +642,11 @@ function Principale({ session }) {
           <span><b>{aperte}</b> da fare</span>
           {urgenti > 0 && <span className="rosso"><b>{urgenti}</b> {urgenti === 1 ? 'urgente' : 'urgenti'}</span>}
           {scadute > 0 && <span className="rosso"><b>{scadute}</b> {scadute === 1 ? 'scaduta' : 'scadute'}</span>}
-          {daVisionare > 0 && <span className="teal"><b>{daVisionare}</b> da visionare</span>}
+          {(daVisionare > 0 || soloVisionare) && (
+            <button className={`mini visionare ${soloVisionare ? 'attivo' : ''}`} onClick={() => setSoloVisionare((v) => !v)}>
+              📄 {daVisionare} da visionare
+            </button>
+          )}
           <span>{occupati}/{lettiRep.length} letti</span>
           <span className="spazio" />
           <button className={`mini ${soloMie ? 'attivo' : ''}`} onClick={() => setSoloMie((v) => !v)}>Mie</button>
@@ -661,7 +667,7 @@ function Principale({ session }) {
       <main className="lista">
         {!caricato && <p className="vuoto">Caricamento…</p>}
         {caricato && lettiMostrati.length === 0 && (
-          <p className="vuoto">{soloMie ? 'Nessuna attività assegnata a te 🎉' : soloConAttivita ? 'Nessuna attività da fare 🎉' : 'Nessun letto.'}</p>
+          <p className="vuoto">{soloVisionare ? 'Nessun referto da visionare 🎉' : soloMie ? 'Nessuna attività assegnata a te 🎉' : soloConAttivita ? 'Nessuna attività da fare 🎉' : 'Nessun letto.'}</p>
         )}
         {lettiMostrati.map((l) => (
           <Letto
@@ -675,7 +681,7 @@ function Principale({ session }) {
             evidenziato={evidenzia && pazPerLetto[l.id]?.id === evidenzia}
           />
         ))}
-        {caricato && !soloConAttivita && !soloMie && (
+        {caricato && !soloConAttivita && !soloMie && !soloVisionare && (
           <button className="btn tratteggio" onClick={() => setModale({ tipo: 'nuovoLetto' })}>+ Aggiungi letto</button>
         )}
       </main>

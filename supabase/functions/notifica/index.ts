@@ -98,7 +98,9 @@ Deno.serve(async (req) => {
   const nuova = body.type === "INSERT";
   const assegnata = a.assegnata_a &&
     (nuova || (body.type === "UPDATE" && body.old_record?.assegnata_a !== a.assegnata_a));
-  if (!nuova && !assegnata) return json({ ignorato: true });
+  // referto pronto: avvisa chi ha l'attività assegnata (o chi l'ha creata), non chi ha segnato "refertato"
+  const refertato = body.type === "UPDATE" && a.stato === "refertato" && body.old_record?.stato !== "refertato";
+  if (!nuova && !assegnata && !refertato) return json({ ignorato: true });
 
   const [{ data: paz }, { data: rep }, { data: autore }] = await Promise.all([
     db.from("pazienti").select("nome, letti(nome)").eq("id", a.paziente_id).single(),
@@ -120,6 +122,18 @@ Deno.serve(async (req) => {
 
   let inviate = 0;
   let destinatari = 0;
+  if (refertato) {
+    const chi = a.assegnata_a || a.creata_da;
+    if (chi && chi !== a.stato_da) {
+      const iscr = await iscrizioniAttive([chi]);
+      destinatari += iscr.length;
+      inviate += await invia(iscr, JSON.stringify({
+        title: `📄 Referto pronto · ${rep?.nome ?? "Reparto"} · Letto ${letto}`,
+        body: `${paz?.nome ?? ""}: ${padre}${a.testo}`, url, tag: `referto-${a.id}`,
+      }), a.urgente);
+    }
+    if (!nuova && !assegnata) return json({ referto: a.testo, inviate, destinatari });
+  }
   if (assegnata && a.assegnata_a !== a.creata_da) {
     const iscr = await iscrizioniAttive([a.assegnata_a]);
     destinatari += iscr.length;
