@@ -21,10 +21,9 @@ export const RIANIMAZIONE = [
 ]
 // stati di avanzamento di un'attività (es. esami, consulenze); "visionato" la chiude come fatta
 export const STATI = [
+  { v: 'da_richiedere', nome: 'Da richiedere', icona: '📌' },
   { v: 'richiesto', nome: 'Richiesto', icona: '📝' },
   { v: 'prenotato', nome: 'Prenotato', icona: '📅' },
-  { v: 'eseguito', nome: 'Eseguito', icona: '🩺' },
-  { v: 'refertato', nome: 'Refertato', icona: '📄' },
   { v: 'visionato', nome: 'Visionato', icona: '👁' },
 ]
 const statoDi = (v) => STATI.find((x) => x.v === v)
@@ -258,7 +257,7 @@ function Principale({ session }) {
   const [io, setIo] = useState(null)                // il mio profilo
   const [richiesteAttesa, setRichiesteAttesa] = useState(0)
   const [soloMie, setSoloMie] = useState(false)
-  const [soloVisionare, setSoloVisionare] = useState(false)
+  const [soloDaRichiedere, setSoloDaRichiedere] = useState(false)
   const [evidenzia, setEvidenzia] = useState(null)  // paziente trovato con la ricerca
   // attività con le sotto-attività aperte (ricordate su questo dispositivo)
   const [sottoAperte, setSottoAperte] = useState(() => {
@@ -580,11 +579,11 @@ function Principale({ session }) {
   )
   const visibili = useMemo(() => {
     let xs = attivita.filter((a) => a.reparto_id === repId && ricoverati.has(a.paziente_id) && (mostraFatte || !a.fatta))
-    if (soloVisionare) xs = xs.filter((a) => !a.fatta && a.stato === 'refertato')
+    if (soloDaRichiedere) xs = xs.filter((a) => !a.fatta && a.stato === 'da_richiedere')
     if (!soloMie) return xs
     const mie = new Set(xs.filter((a) => a.assegnata_a === uid).map((a) => a.id))
     return xs.filter((a) => mie.has(a.id) || mie.has(a.parent_id))
-  }, [attivita, repId, mostraFatte, soloMie, soloVisionare, uid, ricoverati])
+  }, [attivita, repId, mostraFatte, soloMie, soloDaRichiedere, uid, ricoverati])
   const attPerPaz = useMemo(() => {
     const m = {}
     for (const a of visibili) (m[a.paziente_id] ??= []).push(a)
@@ -603,11 +602,11 @@ function Principale({ session }) {
   const urgenti = visibili.filter((a) => !a.fatta && a.urgente).length
   const adesso = new Date()
   const scadute = visibili.filter((a) => T.etichettaScadenza(a, adesso)?.stato === 'scaduta').length
-  const daVisionare = attivita.filter((a) => a.reparto_id === repId && ricoverati.has(a.paziente_id) && !a.fatta && a.stato === 'refertato').length
+  const daRichiedere = attivita.filter((a) => a.reparto_id === repId && ricoverati.has(a.paziente_id) && !a.fatta && a.stato === 'da_richiedere').length
   const occupati = lettiRep.filter((l) => pazPerLetto[l.id]).length
   const repCorrente = reparti.find((r) => r.id === repId)
 
-  const lettiMostrati = soloConAttivita || soloMie || soloVisionare
+  const lettiMostrati = soloConAttivita || soloMie || soloDaRichiedere
     ? lettiRep.filter((l) => {
         const p = pazPerLetto[l.id]
         return p && (attPerPaz[p.id] || []).some((a) => !a.fatta)
@@ -654,9 +653,9 @@ function Principale({ session }) {
           <span><b>{aperte}</b> da fare</span>
           {urgenti > 0 && <span className="rosso"><b>{urgenti}</b> {urgenti === 1 ? 'urgente' : 'urgenti'}</span>}
           {scadute > 0 && <span className="rosso"><b>{scadute}</b> {scadute === 1 ? 'scaduta' : 'scadute'}</span>}
-          {(daVisionare > 0 || soloVisionare) && (
-            <button className={`mini visionare ${soloVisionare ? 'attivo' : ''}`} onClick={() => setSoloVisionare((v) => !v)}>
-              📄 {daVisionare} da visionare
+          {(daRichiedere > 0 || soloDaRichiedere) && (
+            <button className={`mini darichiedere ${soloDaRichiedere ? 'attivo' : ''}`} onClick={() => setSoloDaRichiedere((v) => !v)}>
+              📌 {daRichiedere} da richiedere
             </button>
           )}
           <span>{occupati}/{lettiRep.length} letti</span>
@@ -679,7 +678,7 @@ function Principale({ session }) {
       <main className="lista">
         {!caricato && <p className="vuoto">Caricamento…</p>}
         {caricato && lettiMostrati.length === 0 && (
-          <p className="vuoto">{soloVisionare ? 'Nessun referto da visionare 🎉' : soloMie ? 'Nessuna attività assegnata a te 🎉' : soloConAttivita ? 'Nessuna attività da fare 🎉' : 'Nessun letto.'}</p>
+          <p className="vuoto">{soloDaRichiedere ? 'Nessuna attività da richiedere 🎉' : soloMie ? 'Nessuna attività assegnata a te 🎉' : soloConAttivita ? 'Nessuna attività da fare 🎉' : 'Nessun letto.'}</p>
         )}
         {lettiMostrati.map((l) => (
           <Letto
@@ -691,10 +690,10 @@ function Principale({ session }) {
             az={az}
             apri={setModale}
             evidenziato={evidenzia && pazPerLetto[l.id]?.id === evidenzia}
-            forzaAperta={soloMie || soloVisionare}
+            forzaAperta={soloMie || soloDaRichiedere}
           />
         ))}
-        {caricato && !soloConAttivita && !soloMie && !soloVisionare && (
+        {caricato && !soloConAttivita && !soloMie && !soloDaRichiedere && (
           <button className="btn tratteggio" onClick={() => setModale({ tipo: 'nuovoLetto' })}>+ Aggiungi letto</button>
         )}
       </main>

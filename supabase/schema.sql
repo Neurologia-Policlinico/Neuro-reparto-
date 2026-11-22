@@ -131,14 +131,16 @@ alter table public.attivita add column if not exists assegnata_a uuid references
 create index if not exists attivita_assegnata_idx on public.attivita(assegnata_a) where not fatta;
 alter table public.pazienti add column if not exists data_ricovero date not null default current_date;
 
--- stato di avanzamento (richiesto, prenotato, eseguito, refertato, visionato) con chi/quando
+-- stato di avanzamento (da richiedere, richiesto, prenotato, visionato) con chi/quando
 alter table public.attivita add column if not exists stato text;
 alter table public.attivita add column if not exists stato_il timestamptz;
 alter table public.attivita add column if not exists stato_da uuid references auth.users(id) on delete set null;
-do $$ begin
-  alter table public.attivita add constraint attivita_stato_ck
-    check (stato is null or stato in ('richiesto', 'prenotato', 'eseguito', 'refertato', 'visionato'));
-exception when duplicate_object then null; end $$;
+-- stati ammessi: da richiedere, richiesto, prenotato, visionato
+-- (i vecchi stati "eseguito" e "refertato" vengono tolti; lo script si può rieseguire senza danni)
+alter table public.attivita drop constraint if exists attivita_stato_ck;
+update public.attivita set stato = null where stato in ('eseguito', 'refertato');
+alter table public.attivita add constraint attivita_stato_ck
+  check (stato is null or stato in ('da_richiedere', 'richiesto', 'prenotato', 'visionato'));
 create or replace function public.tocca_stato()
 returns trigger language plpgsql as $$
 begin
