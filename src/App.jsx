@@ -31,8 +31,9 @@ const statoDi = (v) => STATI.find((x) => x.v === v)
 function Crediti() {
   return (
     <p className="crediti">
-      © {new Date().getFullYear()} Dott. P. Roberto e Dott. D. Mezzapesa
-      <br />Neurologia – uso interno
+      © 2026 Ideazione e realizzazione: <b>Paolo Roberto</b>.
+      <br />Con la collaborazione di: Domenico M. Mezzapesa.
+      <br />Tutti i diritti riservati.
     </p>
   )
 }
