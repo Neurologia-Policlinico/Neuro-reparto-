@@ -265,6 +265,8 @@ function Principale({ session }) {
     try { return new Set(JSON.parse(store.get('sottoAperte') || '[]')) } catch { return new Set() }
   })
   useEffect(() => { store.set('sottoAperte', JSON.stringify([...sottoAperte].slice(-300))) }, [sottoAperte])
+  // schede dei pazienti aperte (chiuse di default: si apre cliccando sul nome del paziente)
+  const [schedeAperte, setSchedeAperte] = useState(() => new Set())
   const [, setTick] = useState(0)                   // aggiorna scadenze ogni minuto
   const toastTimer = useRef()
   const richiesta = useRef(0)
@@ -510,6 +512,7 @@ function Principale({ session }) {
         dimesso: false, creato_il: new Date().toISOString(), data_ricovero: dataRicovero || T.oggiLocale(),
       }
       setPazienti((xs) => upsert(xs, row))
+      setSchedeAperte((xs) => new Set(xs).add(row.id))
       return (await esegui(supabase.from('pazienti').insert(row))) ? row : null
     },
     modificaPaziente(p, patch) {
@@ -551,6 +554,14 @@ function Principale({ session }) {
       if (v === 'visionato') mostraToast(`👁 ${a.testo}: visionato`, () => az.impostaStato({ ...a, ...patch }, a.stato || null))
     },
     io: uid,
+    schedaAperta: (pid) => schedeAperte.has(pid),
+    alternaScheda(pid, val) {
+      setSchedeAperte((xs) => {
+        const n = new Set(xs)
+        if (val ?? !n.has(pid)) n.add(pid); else n.delete(pid)
+        return n
+      })
+    },
     aperta: (id) => sottoAperte.has(id),
     alterna(id, val) {
       setSottoAperte((xs) => {
@@ -559,7 +570,7 @@ function Principale({ session }) {
         return n
       })
     },
-  }), [uid, esegui, mostraToast, letti, repId, sottoAperte])
+  }), [uid, esegui, mostraToast, letti, repId, sottoAperte, schedeAperte])
 
   // --- dati derivati
   // solo le attività dei pazienti ancora ricoverati (quelle dei dimessi restano come storico)
@@ -680,6 +691,7 @@ function Principale({ session }) {
             az={az}
             apri={setModale}
             evidenziato={evidenzia && pazPerLetto[l.id]?.id === evidenzia}
+            forzaAperta={soloMie || soloVisionare}
           />
         ))}
         {caricato && !soloConAttivita && !soloMie && !soloVisionare && (
@@ -709,7 +721,7 @@ function Principale({ session }) {
           io={io}
           richiesteAttesa={richiesteAttesa}
           setRichiesteAttesa={setRichiesteAttesa}
-          vaiA={(p) => { setRepId(p.reparto_id); setEvidenzia(p.id); setTimeout(() => setEvidenzia(null), 4000) }}
+          vaiA={(p) => { setRepId(p.reparto_id); setSchedeAperte((xs) => new Set(xs).add(p.id)); setEvidenzia(p.id); setTimeout(() => setEvidenzia(null), 4000) }}
         />
       )}
 
@@ -726,7 +738,7 @@ function Principale({ session }) {
 }
 
 // ---------------------------------------------------------------- scheda letto
-function Letto({ letto, paziente, attivita, profili, az, apri, evidenziato }) {
+function Letto({ letto, paziente, attivita, profili, az, apri, evidenziato, forzaAperta }) {
   const [testo, setTesto] = useState('')
   const [menuIndagini, setMenuIndagini] = useState(false)
   const [urgente, setUrgente] = useState(false)
@@ -766,45 +778,62 @@ function Letto({ letto, paziente, attivita, profili, az, apri, evidenziato }) {
     setMenuIndagini(false)
   }
 
+  const aperta = forzaAperta || az.schedaAperta(paziente.id)
+  // aprendo la scheda si aprono anche le sotto-attività (poi si chiudono una a una con la freccia)
+  function alternaScheda() {
+    if (!aperta) radici.filter((r) => figliDi(r.id).length > 0).forEach((r) => az.alterna(r.id, true))
+    az.alternaScheda(paziente.id)
+  }
+
   return (
-    <section ref={rif} className={`letto ${haUrgenti ? 'urgente' : ''} ${evidenziato ? 'evidenziato' : ''}`}>
-      <div className="intest" onClick={() => apri({ tipo: 'paziente', paziente, letto })}>
-        <span className="num">{letto.nome}</span>
+    <section ref={rif} className={`letto ${haUrgenti ? 'urgente' : ''} ${evidenziato ? 'evidenziato' : ''} ${aperta ? 'aperta' : 'chiusa'}`}>
+      <div className="intest" role="button" aria-expanded={aperta} onClick={alternaScheda}>
+        <button type="button" className="num num-btn" aria-label="Modifica paziente, trasferisci o dimetti"
+          onClick={(e) => { e.stopPropagation(); apri({ tipo: 'paziente', paziente, letto }) }}>{letto.nome}</button>
         <span className="nome">{paziente.nome}</span>
-        {paziente.data_ricovero && <span className="giorno" title="Giornata di ricovero">G{T.giornoRicovero(paziente.data_ricovero)}</span>}
+        {aperta && paziente.data_ricovero && <span className="giorno" title="Giornata di ricovero">G{T.giornoRicovero(paziente.data_ricovero)}</span>}
         {aperte > 0 && <span className="badge">{aperte}</span>}
-        <button className="icona" aria-label="Aggiungi pacchetto di attività"
-          onClick={(e) => { e.stopPropagation(); apri({ tipo: 'pacchetto', paziente, letto }) }}>📋</button>
-        <button className="icona" aria-label="Consegna per la guardia"
-          onClick={(e) => { e.stopPropagation(); apri({ tipo: 'consegna', paziente, letto }) }}>🌙</button>
+        <span className="freccia-scheda" aria-hidden="true">{aperta ? '▾' : '▸'}</span>
+        {aperta && (
+          <>
+            <button className="icona" aria-label="Aggiungi pacchetto di attività"
+              onClick={(e) => { e.stopPropagation(); apri({ tipo: 'pacchetto', paziente, letto }) }}>📋</button>
+            <button className="icona" aria-label="Consegna per la guardia"
+              onClick={(e) => { e.stopPropagation(); apri({ tipo: 'consegna', paziente, letto }) }}>🌙</button>
+          </>
+        )}
       </div>
-      {haConsegna(paziente) && (
-        <BoxConsegna paziente={paziente} compatto onClick={() => apri({ tipo: 'consegna', paziente, letto })} />
+      {aperta && (
+        <>
+        {haConsegna(paziente) && (
+          <BoxConsegna paziente={paziente} compatto onClick={() => apri({ tipo: 'consegna', paziente, letto })} />
+        )}
+        {paziente.note && (
+          <p className="note" onClick={() => apri({ tipo: 'paziente', paziente, letto })}>{paziente.note}</p>
+        )}
+        <ul className="attivita">
+          {radici.map((a) => (
+            <Attivita key={a.id} a={a} figli={figliDi(a.id)} tutte={attivita} profili={profili} az={az} apri={apri} paziente={paziente} />
+          ))}
+        </ul>
+        {menuIndagini && !perGuardia && (
+          <MenuIndagini filtro={testo} scegli={(v) => { setTesto(v); setMenuIndagini(false) }} />
+        )}
+        <form className="aggiungi" onSubmit={aggiungi}>
+          <input
+            value={testo}
+            onChange={(e) => { setTesto(e.target.value); setMenuIndagini(true) }}
+            onFocus={() => setMenuIndagini(true)}
+            onBlur={() => setMenuIndagini(false)}
+            placeholder={perGuardia ? 'Valutazione per la guardia…' : 'Nuova attività…'}
+            enterKeyHint="done"
+          />
+          <button type="button" className={`luna ${perGuardia ? 'attivo' : ''}`} onClick={() => setPerGuardia((v) => !v)} aria-label="Per la guardia">🌙</button>
+          <button type="button" className={`urg ${urgente ? 'attivo' : ''}`} onClick={() => setUrgente((v) => !v)} aria-label="Urgente">!</button>
+          <button className="piu" aria-label="Aggiungi" disabled={!testo.trim()}>+</button>
+        </form>
+        </>
       )}
-      {paziente.note && (
-        <p className="note" onClick={() => apri({ tipo: 'paziente', paziente, letto })}>{paziente.note}</p>
-      )}
-      <ul className="attivita">
-        {radici.map((a) => (
-          <Attivita key={a.id} a={a} figli={figliDi(a.id)} tutte={attivita} profili={profili} az={az} apri={apri} paziente={paziente} />
-        ))}
-      </ul>
-      {menuIndagini && !perGuardia && (
-        <MenuIndagini filtro={testo} scegli={(v) => { setTesto(v); setMenuIndagini(false) }} />
-      )}
-      <form className="aggiungi" onSubmit={aggiungi}>
-        <input
-          value={testo}
-          onChange={(e) => { setTesto(e.target.value); setMenuIndagini(true) }}
-          onFocus={() => setMenuIndagini(true)}
-          onBlur={() => setMenuIndagini(false)}
-          placeholder={perGuardia ? 'Valutazione per la guardia…' : 'Nuova attività…'}
-          enterKeyHint="done"
-        />
-        <button type="button" className={`luna ${perGuardia ? 'attivo' : ''}`} onClick={() => setPerGuardia((v) => !v)} aria-label="Per la guardia">🌙</button>
-        <button type="button" className={`urg ${urgente ? 'attivo' : ''}`} onClick={() => setUrgente((v) => !v)} aria-label="Urgente">!</button>
-        <button className="piu" aria-label="Aggiungi" disabled={!testo.trim()}>+</button>
-      </form>
     </section>
   )
 }
@@ -1141,6 +1170,7 @@ function FormSotto({ chiudi, az, a, paziente }) {
     righe.split('\n').map((s) => s.trim()).filter(Boolean)
       .forEach((t) => az.aggiungiAttivita(paziente, t, false, a.id, { guardia: a.guardia }))
     az.alterna(a.id, true)
+    az.alternaScheda(paziente.id, true)
     chiudi()
   }
   return (

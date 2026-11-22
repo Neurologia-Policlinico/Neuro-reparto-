@@ -493,3 +493,9 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
   background: transparent; font: inherit; font-size: 15px; color: inherit; cursor: pointer;
 }
 .menu-indagini .voce-ind:active, .menu-indagini .voce-ind:hover { background: var(--bg); }
+
+/* scheda paziente chiusa/aperta: il numero del letto è un pulsante (modifica paziente) */
+.num-btn { border: 0; font-family: inherit; cursor: pointer; }
+.num-btn:active { filter: brightness(.92); }
+.freccia-scheda { flex: none; color: var(--muted); font-size: 14px; padding: 0 6px; }
+.letto.chiusa .intest { padding-block: 8px; }
