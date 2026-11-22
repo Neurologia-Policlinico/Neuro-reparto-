@@ -1,6 +1,6 @@
 # Neuro Reparto
 
-© 2026 P. Roberto e D. Mezzapesa — Neurologia, uso interno.
+© 2026 Dott. P. Roberto e Dott. D. Mezzapesa — Neurologia, uso interno.
 
 App per telefono (web app installabile) con le attività dei pazienti dei reparti di Neurologia. Si aggiorna in tempo reale per tutti i medici collegati e invia notifiche push.
 

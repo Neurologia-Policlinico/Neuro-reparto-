@@ -31,7 +31,7 @@ const statoDi = (v) => STATI.find((x) => x.v === v)
 function Crediti() {
   return (
     <p className="crediti">
-      © {new Date().getFullYear()} P. Roberto e D. Mezzapesa
+      © {new Date().getFullYear()} Dott. P. Roberto e Dott. D. Mezzapesa
       <br />Neurologia – uso interno
     </p>
   )
