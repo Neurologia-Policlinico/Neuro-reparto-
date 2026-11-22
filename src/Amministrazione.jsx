@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { supabase } from './supabase'
+import { supabase, infoConfigurazione } from './supabase'
 import Foglio from './Foglio'
 import * as push from './push'
 import { oggiLocale } from './tempi'
@@ -323,6 +323,11 @@ function ConfiguraNotifiche({ mostraToast }) {
         <li>Database → Webhooks: <code>attivita</code> (Insert, Update) e <code>richieste_accesso</code> (Insert) → funzione <code>notifica</code></li>
       </ul>
       <p><b>3.</b> Ogni medico: ⚙︎ Impostazioni → <b>Attiva notifiche</b>.</p>
+      <details className="dettagli-tecnici sinistra">
+        <summary>Dettagli tecnici della configurazione</summary>
+        <p>Progetto Supabase: <code>{infoConfigurazione().progetto}</code></p>
+        <p>Tipo di chiave dell'app: <code>{infoConfigurazione().tipo}</code></p>
+      </details>
     </div>
   )
 }

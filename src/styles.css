@@ -499,3 +499,5 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 
 .crediti { margin: 18px 0 4px; text-align: center; font-size: 12px; line-height: 1.5; color: var(--muted); }
 .crediti b { color: var(--text); font-weight: 600; }
+
+.dettagli-tecnici.sinistra { text-align: left; margin-top: 12px; }

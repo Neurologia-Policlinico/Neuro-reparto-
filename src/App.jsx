@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { supabase, configurato, infoConfigurazione } from './supabase'
+import { supabase, configurato } from './supabase'
 import * as push from './push'
 import Foglio from './Foglio'
 import Amministrazione from './Amministrazione'
@@ -211,11 +211,6 @@ function Login() {
         <button className="btn primario" disabled={occupato}>{occupato ? 'Accesso…' : 'Entra'}</button>
         <button type="button" className="btn link" onClick={recupera}>Password dimenticata?</button>
         <button type="button" className="btn" onClick={() => setRichiedi(true)}>Non hai un account? Richiedi accesso</button>
-        <details className="dettagli-tecnici">
-          <summary>Dettagli tecnici</summary>
-          <p>Progetto Supabase: <code>{infoConfigurazione().progetto}</code></p>
-          <p>Tipo di chiave: <code>{infoConfigurazione().tipo}</code></p>
-        </details>
         <Crediti />
       </form>
     </div>
