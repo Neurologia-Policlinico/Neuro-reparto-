@@ -517,7 +517,7 @@ function Principale({ session }) {
         dimesso: false, creato_il: new Date().toISOString(), data_ricovero: dataRicovero || T.oggiLocale(),
       }
       setPazienti((xs) => upsert(xs, row))
-      setSchedeAperte((xs) => new Set(xs).add(row.id))
+      setSchedeAperte(new Set([row.id]))
       return (await esegui(supabase.from('pazienti').insert(row))) ? row : null
     },
     modificaPaziente(p, patch) {
@@ -560,12 +560,9 @@ function Principale({ session }) {
     },
     io: uid,
     schedaAperta: (pid) => schedeAperte.has(pid),
+    // una sola scheda aperta alla volta: aprendone una si chiudono le altre
     alternaScheda(pid, val) {
-      setSchedeAperte((xs) => {
-        const n = new Set(xs)
-        if (val ?? !n.has(pid)) n.add(pid); else n.delete(pid)
-        return n
-      })
+      setSchedeAperte((xs) => (val ?? !xs.has(pid) ? new Set([pid]) : new Set([...xs].filter((x) => x !== pid))))
     },
     aperta: (id) => sottoAperte.has(id),
     alterna(id, val) {
@@ -726,7 +723,7 @@ function Principale({ session }) {
           io={io}
           richiesteAttesa={richiesteAttesa}
           setRichiesteAttesa={setRichiesteAttesa}
-          vaiA={(p) => { setRepId(p.reparto_id); setSchedeAperte((xs) => new Set(xs).add(p.id)); setEvidenzia(p.id); setTimeout(() => setEvidenzia(null), 4000) }}
+          vaiA={(p) => { setRepId(p.reparto_id); setSchedeAperte(new Set([p.id])); setEvidenzia(p.id); setTimeout(() => setEvidenzia(null), 4000) }}
         />
       )}
 
