@@ -1,5 +1,7 @@
 # Neuro Reparto
 
+© 2026 P. Roberto e D. Mezzapesa — Neurologia, uso interno.
+
 App per telefono (web app installabile) con le attività dei pazienti dei reparti di Neurologia. Si aggiorna in tempo reale per tutti i medici collegati e invia notifiche push.
 
 - Reparti: **Stroke (8)**, **PUCA (8)**, **Ospedaliera (8)**, **Amaducci Uomini (10)**, **Amaducci Donne (10)**. I letti si possono aggiungere, rinominare ed eliminare dall'app.

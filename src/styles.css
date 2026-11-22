@@ -496,3 +496,6 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .num-btn:active { filter: brightness(.92); }
 .freccia-scheda { flex: none; color: var(--muted); font-size: 14px; padding: 0 6px; }
 .letto.chiusa .intest { padding-block: 8px; }
+
+.crediti { margin: 18px 0 4px; text-align: center; font-size: 12px; line-height: 1.5; color: var(--muted); }
+.crediti b { color: var(--text); font-weight: 600; }

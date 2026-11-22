@@ -27,6 +27,15 @@ export const STATI = [
   { v: 'visionato', nome: 'Visionato', icona: '👁' },
 ]
 const statoDi = (v) => STATI.find((x) => x.v === v)
+// riga dei crediti mostrata nel login e nelle Impostazioni
+function Crediti() {
+  return (
+    <p className="crediti">
+      © {new Date().getFullYear()} P. Roberto e D. Mezzapesa
+      <br />Neurologia – uso interno
+    </p>
+  )
+}
 const haConsegna = (p) => Boolean(p.consegna?.trim() || p.gravita > 0 || p.rianimazione || p.allergie?.trim())
 const store = {
   get(k) { try { return localStorage.getItem(k) } catch { return null } },
@@ -207,6 +216,7 @@ function Login() {
           <p>Progetto Supabase: <code>{infoConfigurazione().progetto}</code></p>
           <p>Tipo di chiave: <code>{infoConfigurazione().tipo}</code></p>
         </details>
+        <Crediti />
       </form>
     </div>
   )
@@ -1315,6 +1325,7 @@ function Impostazioni({ chiudi, session, profili, setProfili, reparti, mostraToa
       <div className="sezione">
         <button className="btn pericolo" onClick={async () => { await push.disattiva().catch(() => {}); supabase.auth.signOut() }}>Esci</button>
       </div>
+      <Crediti />
     </Foglio>
   )
 }
