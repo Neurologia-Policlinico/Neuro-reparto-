@@ -37,3 +37,11 @@ export const INDAGINI = [
     'Radiografia torace', 'Ecografia addome', 'Polisonnografia', 'Biopsia', 'Test genetico',
   ] },
 ]
+
+// vero se il testo è una delle indagini dell'elenco (anche seguita da altre parole, es. "ECG urgente"):
+// solo a queste una nuova attività assegna in automatico lo stato "Da richiedere"
+const TUTTE = INDAGINI.flatMap((g) => g.voci).map((v) => v.toLowerCase())
+export function èIndagine(testo) {
+  const t = testo.trim().toLowerCase().replace(/\s+/g, ' ')
+  return TUTTE.some((v) => t === v || t.startsWith(v + ' ') || t.startsWith(v + ','))
+}

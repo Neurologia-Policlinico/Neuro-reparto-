@@ -450,10 +450,10 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
   display: inline-block; border: 1px solid transparent; border-radius: 999px; padding: 0 7px; margin-right: 6px;
   font-size: 11px; font-weight: 700; line-height: 18px; vertical-align: 1px; cursor: pointer;
 }
-.s-richiesto { color: var(--primary); background: var(--primary-soft); }
-.s-prenotato { color: var(--viola); background: var(--viola-soft); }
 .s-da_richiedere { color: var(--warn); background: var(--warn-soft); }
-.s-visionato { color: var(--ok); background: transparent; border-color: var(--ok); }
+.s-da_prenotare { color: var(--viola); background: var(--viola-soft); }
+.s-da_eseguire { color: var(--primary); background: var(--primary-soft); }
+.s-da_scaricare { color: var(--ok); background: transparent; border-color: var(--ok); }
 .fatta .pill-stato { opacity: .7; }
 .scelta-stato { margin-bottom: 14px; }
 .stati { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -463,18 +463,24 @@ textarea.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 }
 .stato-btn span { font-size: 18px; }
 .stato-btn.attivo { border-width: 2px; }
-.stato-btn.attivo.s-richiesto, .stato-btn.s-richiesto.attivo { border-color: var(--primary); }
 .stato-btn:not(.attivo) { background: var(--card); color: var(--text); }
 .mini-link { padding: 0; min-height: 0; font-size: 12px; display: inline; }
 @media (max-width: 360px) { .stati { grid-template-columns: repeat(3, 1fr); } }
 /* pulsante dello stato attivo: colori dello stato */
-.stato-btn.attivo.s-richiesto { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
-.stato-btn.attivo.s-prenotato { background: var(--viola-soft); color: var(--viola); border-color: var(--viola); }
 .stato-btn.attivo.s-da_richiedere { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
-.stato-btn.attivo.s-visionato { background: var(--card); color: var(--ok); border-color: var(--ok); }
+.stato-btn.attivo.s-da_prenotare { background: var(--viola-soft); color: var(--viola); border-color: var(--viola); }
+.stato-btn.attivo.s-da_eseguire { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+.stato-btn.attivo.s-da_scaricare { background: var(--card); color: var(--ok); border-color: var(--ok); }
 
-.mini.darichiedere { color: var(--warn); border-color: var(--warn); font-weight: 700; }
-.mini.darichiedere.attivo { background: var(--warn); color: #fff; }
+.mini.filtro-stato { font-weight: 700; background: transparent; }
+.mini.filtro-stato.s-da_richiedere { color: var(--warn); border-color: var(--warn); }
+.mini.filtro-stato.s-da_prenotare { color: var(--viola); border-color: var(--viola); }
+.mini.filtro-stato.s-da_eseguire { color: var(--primary); border-color: var(--primary); }
+.mini.filtro-stato.s-da_scaricare { color: var(--ok); border-color: var(--ok); }
+.mini.filtro-stato.attivo.s-da_richiedere { background: var(--warn); color: #fff; }
+.mini.filtro-stato.attivo.s-da_prenotare { background: var(--viola); color: #fff; }
+.mini.filtro-stato.attivo.s-da_eseguire { background: var(--primary); color: #fff; }
+.mini.filtro-stato.attivo.s-da_scaricare { background: var(--ok); color: #fff; }
 
 /* menu a discesa delle indagini (Nuova attività) */
 .menu-indagini {

@@ -3,7 +3,7 @@ import { supabase, configurato } from './supabase'
 import * as push from './push'
 import Foglio from './Foglio'
 import Amministrazione from './Amministrazione'
-import { INDAGINI } from './indagini'
+import { INDAGINI, èIndagine } from './indagini'
 import * as T from './tempi'
 
 // ---------------------------------------------------------------- utilità
@@ -19,12 +19,12 @@ export const RIANIMAZIONE = [
   { v: 'limitata', nome: 'Cure limitate', breve: 'Cure limitate' },
   { v: 'no', nome: 'Non rianimabile (DNR)', breve: 'DNR' },
 ]
-// stati di avanzamento di un'attività (es. esami, consulenze); "visionato" la chiude come fatta
+// prossima azione da fare per un esame o una consulenza; a fine percorso si spunta l'attività
 export const STATI = [
   { v: 'da_richiedere', nome: 'Da richiedere', icona: '📌' },
-  { v: 'richiesto', nome: 'Richiesto', icona: '📝' },
-  { v: 'prenotato', nome: 'Prenotato', icona: '📅' },
-  { v: 'visionato', nome: 'Visionato', icona: '👁' },
+  { v: 'da_prenotare', nome: 'Da prenotare', icona: '📅' },
+  { v: 'da_eseguire', nome: 'Da eseguire', icona: '🩺' },
+  { v: 'da_scaricare', nome: 'Da scaricare', icona: '📥' },
 ]
 const statoDi = (v) => STATI.find((x) => x.v === v)
 // riga dei crediti mostrata nel login e nelle Impostazioni
@@ -263,7 +263,7 @@ function Principale({ session }) {
   const [io, setIo] = useState(null)                // il mio profilo
   const [richiesteAttesa, setRichiesteAttesa] = useState(0)
   const [soloMie, setSoloMie] = useState(false)
-  const [soloDaRichiedere, setSoloDaRichiedere] = useState(false)
+  const [filtroStato, setFiltroStato] = useState(null)   // una delle azioni di STATI, oppure null
   const [evidenzia, setEvidenzia] = useState(null)  // paziente trovato con la ricerca
   // attività con le sotto-attività aperte (ricordate su questo dispositivo)
   const [sottoAperte, setSottoAperte] = useState(() => {
@@ -442,6 +442,8 @@ function Principale({ session }) {
         scadenza: extra.scadenza || null, ripeti_ore: extra.ripeti_ore || null,
         ripeti_orari: extra.ripeti_orari || null, assegnata_a: extra.assegnata_a || null,
       }
+      // le indagini dell'elenco partono da "Da richiedere"; le altre attività (es. "Rivalutare PA") restano senza stato
+      if (extra.esame && !parentId && !extra.guardia) Object.assign(row, { stato: 'da_richiedere', stato_il: row.creata_il, stato_da: uid })
       setAttivita((xs) => upsert(xs, row))
       esegui(supabase.from('attivita').insert(row))
     },
@@ -489,6 +491,7 @@ function Principale({ session }) {
       const ora = new Date().toISOString()
       const copia = (x, extra) => ({
         ...x, id: uuid(), fatta: false, fatta_da: null, fatta_il: null, creata_da: uid, creata_il: ora, ...extra,
+        ...(x.stato ? { stato: 'da_richiedere', stato_il: ora, stato_da: uid } : {}),
       })
       const nuova = copia(a, { scadenza: quando.toISOString() })
       const nuoviFigli = figliTutti.map((f) => copia(f, { parent_id: nuova.id, scadenza: null }))
@@ -552,11 +555,9 @@ function Principale({ session }) {
     impostaStato(a, v) {
       const ora = new Date().toISOString()
       const patch = { stato: v, stato_il: ora, stato_da: uid }
-      if (v === 'visionato' && !a.fatta) Object.assign(patch, { fatta: true, fatta_da: uid, fatta_il: ora })
-      if (v && v !== 'visionato' && a.fatta) Object.assign(patch, { fatta: false, fatta_da: null, fatta_il: null })
+      if (v && a.fatta) Object.assign(patch, { fatta: false, fatta_da: null, fatta_il: null })
       setAttivita((xs) => upsert(xs, { ...a, ...patch }))
       esegui(supabase.from('attivita').update(patch).eq('id', a.id))
-      if (v === 'visionato') mostraToast(`👁 ${a.testo}: visionato`, () => az.impostaStato({ ...a, ...patch }, a.stato || null))
     },
     io: uid,
     schedaAperta: (pid) => schedeAperte.has(pid),
@@ -582,11 +583,11 @@ function Principale({ session }) {
   )
   const visibili = useMemo(() => {
     let xs = attivita.filter((a) => a.reparto_id === repId && ricoverati.has(a.paziente_id) && (mostraFatte || !a.fatta))
-    if (soloDaRichiedere) xs = xs.filter((a) => !a.fatta && a.stato === 'da_richiedere')
+    if (filtroStato) xs = xs.filter((a) => !a.fatta && a.stato === filtroStato)
     if (!soloMie) return xs
     const mie = new Set(xs.filter((a) => a.assegnata_a === uid).map((a) => a.id))
     return xs.filter((a) => mie.has(a.id) || mie.has(a.parent_id))
-  }, [attivita, repId, mostraFatte, soloMie, soloDaRichiedere, uid, ricoverati])
+  }, [attivita, repId, mostraFatte, soloMie, filtroStato, uid, ricoverati])
   const attPerPaz = useMemo(() => {
     const m = {}
     for (const a of visibili) (m[a.paziente_id] ??= []).push(a)
@@ -605,11 +606,12 @@ function Principale({ session }) {
   const urgenti = visibili.filter((a) => !a.fatta && a.urgente).length
   const adesso = new Date()
   const scadute = visibili.filter((a) => T.etichettaScadenza(a, adesso)?.stato === 'scaduta').length
-  const daRichiedere = attivita.filter((a) => a.reparto_id === repId && ricoverati.has(a.paziente_id) && !a.fatta && a.stato === 'da_richiedere').length
+  const perStato = Object.fromEntries(STATI.map((x) => [x.v, attivita.filter(
+    (a) => a.reparto_id === repId && ricoverati.has(a.paziente_id) && !a.fatta && a.stato === x.v).length]))
   const occupati = lettiRep.filter((l) => pazPerLetto[l.id]).length
   const repCorrente = reparti.find((r) => r.id === repId)
 
-  const lettiMostrati = soloConAttivita || soloMie || soloDaRichiedere
+  const lettiMostrati = soloConAttivita || soloMie || filtroStato
     ? lettiRep.filter((l) => {
         const p = pazPerLetto[l.id]
         return p && (attPerPaz[p.id] || []).some((a) => !a.fatta)
@@ -656,11 +658,12 @@ function Principale({ session }) {
           <span><b>{aperte}</b> da fare</span>
           {urgenti > 0 && <span className="rosso"><b>{urgenti}</b> {urgenti === 1 ? 'urgente' : 'urgenti'}</span>}
           {scadute > 0 && <span className="rosso"><b>{scadute}</b> {scadute === 1 ? 'scaduta' : 'scadute'}</span>}
-          {(daRichiedere > 0 || soloDaRichiedere) && (
-            <button className={`mini darichiedere ${soloDaRichiedere ? 'attivo' : ''}`} onClick={() => setSoloDaRichiedere((v) => !v)}>
-              📌 {daRichiedere} da richiedere
+          {STATI.filter((x) => perStato[x.v] > 0 || filtroStato === x.v).map((x) => (
+            <button key={x.v} className={`mini filtro-stato s-${x.v} ${filtroStato === x.v ? 'attivo' : ''}`}
+              onClick={() => setFiltroStato((v) => (v === x.v ? null : x.v))}>
+              {x.icona} {perStato[x.v]} {x.nome.toLowerCase()}
             </button>
-          )}
+          ))}
           <span>{occupati}/{lettiRep.length} letti</span>
           <span className="spazio" />
           <button className={`mini ${soloMie ? 'attivo' : ''}`} onClick={() => setSoloMie((v) => !v)}>Mie</button>
@@ -681,7 +684,7 @@ function Principale({ session }) {
       <main className="lista">
         {!caricato && <p className="vuoto">Caricamento…</p>}
         {caricato && lettiMostrati.length === 0 && (
-          <p className="vuoto">{soloDaRichiedere ? 'Nessuna attività da richiedere 🎉' : soloMie ? 'Nessuna attività assegnata a te 🎉' : soloConAttivita ? 'Nessuna attività da fare 🎉' : 'Nessun letto.'}</p>
+          <p className="vuoto">{filtroStato ? `Nessuna attività "${statoDi(filtroStato).nome.toLowerCase()}" 🎉` : soloMie ? 'Nessuna attività assegnata a te 🎉' : soloConAttivita ? 'Nessuna attività da fare 🎉' : 'Nessun letto.'}</p>
         )}
         {lettiMostrati.map((l) => (
           <Letto
@@ -693,10 +696,10 @@ function Principale({ session }) {
             az={az}
             apri={setModale}
             evidenziato={evidenzia && pazPerLetto[l.id]?.id === evidenzia}
-            forzaAperta={soloMie || soloDaRichiedere}
+            forzaAperta={soloMie || Boolean(filtroStato)}
           />
         ))}
-        {caricato && !soloConAttivita && !soloMie && !soloDaRichiedere && (
+        {caricato && !soloConAttivita && !soloMie && !filtroStato && (
           <button className="btn tratteggio" onClick={() => setModale({ tipo: 'nuovoLetto' })}>+ Aggiungi letto</button>
         )}
       </main>
@@ -773,7 +776,7 @@ function Letto({ letto, paziente, attivita, profili, az, apri, evidenziato, forz
     e.preventDefault()
     const t = testo.trim()
     if (!t) return
-    az.aggiungiAttivita(paziente, t, urgente, null, { guardia: perGuardia })
+    az.aggiungiAttivita(paziente, t, urgente, null, { guardia: perGuardia, esame: !perGuardia && èIndagine(t) })
     setTesto('')
     setUrgente(false)
     setPerGuardia(false)
@@ -821,12 +824,13 @@ function Letto({ letto, paziente, attivita, profili, az, apri, evidenziato, forz
         {menuIndagini && !perGuardia && (
           <MenuIndagini filtro={testo} scegli={(v) => { setTesto(v); setMenuIndagini(false) }} />
         )}
-        <form className="aggiungi" onSubmit={aggiungi}>
+        {/* i pulsanti del modulo non tolgono il focus al campo: altrimenti il menu si chiude, il modulo si sposta e il tocco su "+" va perso */}
+        <form className="aggiungi" onSubmit={aggiungi} onPointerDown={(e) => { if (e.target.closest('button')) e.preventDefault() }}>
           <input
             value={testo}
             onChange={(e) => { setTesto(e.target.value); setMenuIndagini(true) }}
             onFocus={() => setMenuIndagini(true)}
-            onBlur={() => setMenuIndagini(false)}
+            onBlur={() => setTimeout(() => setMenuIndagini(false), 200)}
             placeholder={perGuardia ? 'Valutazione per la guardia…' : 'Nuova attività…'}
             enterKeyHint="done"
           />
